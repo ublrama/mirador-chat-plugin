@@ -1,0 +1,1 @@
+# mirador-chat-plugin
