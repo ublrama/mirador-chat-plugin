@@ -11,7 +11,7 @@ export default defineConfig({
   build: {
     lib: {
       entry: './src/index.js',
-      fileName: (format) => (format === 'es' ? 'mirador-chat-plugin.es.js' : 'mirador-chat-plugin.umd.js'),
+      fileName: () => 'mirador-chat-plugin.es.js',
       formats: ['es'],
       name: 'MiradorChatPlugin',
     },

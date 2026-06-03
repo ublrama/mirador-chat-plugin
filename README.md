@@ -24,8 +24,8 @@ Make sure the following packages are already installed in the host app:
 | Package | Version |
 |---|---|
 | `mirador` | `^4.0.0` |
-| `react` | `^18 \|\| ^19` |
-| `react-dom` | `^18 \|\| ^19` |
+| `react` | `^18 || ^19` |
+| `react-dom` | `^18 || ^19` |
 | `@mui/material` | `^7.0.0` |
 | `@mui/icons-material` | `^7.0.0` |
 | `@mui/system` | `^7.0.0` |
