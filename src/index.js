@@ -1,7 +1,6 @@
 import { ChatTopBarButton } from './components/ChatTopBarButton';
 import { ChatCompanionWindow } from './ChatCompanionWindowContainer';
-import ActionTypes from '../../mirador/src/state/actions/action-types';
-import { v4 as uuid } from 'uuid';
+import ActionTypes from './state/action-types';
 
 /**
  * Mirador 4 plugin configuration for AI chat assistant
@@ -33,7 +32,7 @@ export const miradorQuestionPlugin = [
     },
     mapDispatchToProps: (dispatch, { windowId }) => ({
       addCompanionWindow: (content) => {
-        const id = `cw-${uuid()}`;
+        const id = `cw-${crypto.randomUUID()}`;
         return dispatch({
           id,
           payload: {
