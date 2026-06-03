@@ -1,11 +1,12 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import CompanionWindow from '../../mirador/src/containers/CompanionWindow.js';
 import { ChatComponent } from './components/ChatComponent';
 
 /**
  * Chat Companion Window Container
- * Wraps ChatComponent in a CompanionWindow for the Mirador sidebar
+ * Renders ChatComponent inside Mirador's companion window.
+ * The CompanionWindow wrapper is provided automatically by Mirador's plugin
+ * system when registering a plugin with `companionWindowKey`.
  */
 export function ChatCompanionWindow({
   id,
@@ -14,35 +15,13 @@ export function ChatCompanionWindow({
   state,
   actions,
 }) {
-
-  // Guard against missing actions
-  if (!actions) {
-    console.warn('[ChatCompanionWindow] Actions not available - plugin may not be properly registered');
-  }
-
-  console.debug('[ChatCompanionWindow] Props received', {
-    id,
-    windowId,
-    manifestId,
-    stateExists: !!state,
-    actionsExists: !!actions,
-    actionKeys: actions ? Object.keys(actions).slice(0, 15) : [],
-  });
   return (
-      <CompanionWindow
-          title="AI Chat Assistant"
-          windowId={windowId}
-          id={id}
-          style={{ width: '100%', flex: 1 }}
-      >
-        <ChatComponent
-            manifestId={manifestId}
-            windowId={windowId}
-            state={state}
-            actions={actions}
-        />
-      </CompanionWindow>
-
+    <ChatComponent
+      manifestId={manifestId}
+      windowId={windowId}
+      state={state}
+      actions={actions}
+    />
   );
 }
 
@@ -53,3 +32,4 @@ ChatCompanionWindow.propTypes = {
   state: PropTypes.object,
   actions: PropTypes.object,
 };
+
