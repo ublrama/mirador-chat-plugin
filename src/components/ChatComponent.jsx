@@ -12,15 +12,19 @@ import {
   Badge,
   FormControlLabel,
   Switch,
+  LinearProgress,
+  Chip,
 } from '@mui/material';
 import ImageSearchIcon from '@mui/icons-material/ImageSearch';
 import DescriptionIcon from '@mui/icons-material/Description';
+import MemoryIcon from '@mui/icons-material/Memory';
 import { styled } from '@mui/material/styles';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SaveIcon from '@mui/icons-material/Save';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import { useConversation } from '../hooks/useConversation';
 import { useCanvasNavigation } from '../hooks/useCanvasNavigation';
+import { useWebLLMEngine } from '../hooks/useWebLLMEngine';
 import { ScopeSelector } from './ScopeSelector';
 import { ChatMessage } from './ChatMessage';
 import { StreamingMessage } from './StreamingMessage';
@@ -112,6 +116,12 @@ const HeaderActions = styled(Box)(({ theme }) => ({
   alignItems: 'center',
 }));
 
+const WebLLMBannerBox = styled(Box)(({ theme }) => ({
+  padding: theme.spacing(1, 2),
+  borderBottom: `1px solid ${theme.palette.divider}`,
+  backgroundColor: theme.palette.background.default,
+}));
+
 /**
  * Main chat component integrating all chat features
  */
@@ -145,11 +155,25 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
 
   // Custom hooks - useCanvasNavigation will read canvasIndex from state
   const canvasNav = useCanvasNavigation(state, windowId, actions);
+
+  // WebLLM in-browser engine (optional; only active when VITE_WEBLLM_ENABLED=true)
+  const webLLMEnabled = import.meta.env.VITE_WEBLLM_ENABLED === 'true';
+  const webLLM = useWebLLMEngine();
+  const resolvedEngine = webLLMEnabled ? (webLLM.engine || null) : null;
+
+  // Resolve the current canvas image URL for vision-model use
+  const canvasImageUrl = useImageContext && canvasNav.currentCanvas
+    ? canvasNav.getCanvasThumbnail(canvasNav.currentCanvas.id)
+    : null;
+
   const conversation = useConversation(manifestId, {
     scope,
     canvasId: canvasNav.currentCanvas?.id,
     useImageContext,
     useMetadataContext,
+    engine: resolvedEngine,
+    canvasImageUrl,
+    modelId: webLLM.modelId,
   });
 
   useEffect(() => {
@@ -358,6 +382,65 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
             </Tooltip>
           </Box>
         </ChatHeader>
+
+        {/* WebLLM status banner – shown only when VITE_WEBLLM_ENABLED=true */}
+        {webLLMEnabled && (
+          <WebLLMBannerBox>
+            {webLLM.status === 'idle' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <MemoryIcon fontSize="small" color="action" />
+                <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+                  In-browser AI available ({webLLM.modelId})
+                </Typography>
+                <Button size="small" variant="outlined" onClick={webLLM.initEngine}>
+                  Load model
+                </Button>
+              </Box>
+            )}
+
+            {webLLM.status === 'loading' && (
+              <Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                  <MemoryIcon fontSize="small" color="primary" />
+                  <Typography variant="caption" color="primary" sx={{ flex: 1 }}>
+                    {webLLM.progressText || 'Loading model…'} ({webLLM.progress}%)
+                  </Typography>
+                </Box>
+                <LinearProgress variant="determinate" value={webLLM.progress} />
+              </Box>
+            )}
+
+            {webLLM.status === 'ready' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <MemoryIcon fontSize="small" color="success" />
+                <Typography variant="caption" color="success.main" sx={{ flex: 1 }}>
+                  In-browser AI ready
+                </Typography>
+                <Chip label={webLLM.modelId} size="small" variant="outlined" />
+              </Box>
+            )}
+
+            {webLLM.status === 'unsupported' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <MemoryIcon fontSize="small" color="disabled" />
+                <Typography variant="caption" color="text.disabled">
+                  WebGPU not available – using backend
+                </Typography>
+              </Box>
+            )}
+
+            {webLLM.status === 'error' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="caption" color="error" sx={{ flex: 1 }}>
+                  Failed to load model: {webLLM.error}
+                </Typography>
+                <Button size="small" color="error" onClick={webLLM.initEngine}>
+                  Retry
+                </Button>
+              </Box>
+            )}
+          </WebLLMBannerBox>
+        )}
 
         <MessageArea ref={messageAreaRef}>
           {error && (

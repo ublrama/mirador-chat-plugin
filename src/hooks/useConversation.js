@@ -7,10 +7,23 @@ import { mockStreamingAPI } from '../api/mockStreamingAPI';
  * @param {Object} options - Configuration options
  * @param {string} options.scope - Search scope: 'manifest' | 'canvas'
  * @param {string} options.canvasId - Current canvas ID (if scope is 'canvas')
+ * @param {boolean} options.useImageContext - Whether to include the current canvas image
+ * @param {boolean} options.useMetadataContext - Whether to include manifest metadata
+ * @param {object|null} options.engine - Optional WebLLM engine for in-browser inference
+ * @param {string|null} options.canvasImageUrl - Resolved image URL for the current canvas
+ * @param {string} options.modelId - WebLLM model identifier (used when engine is set)
  * @returns {Object} Conversation state and methods
  */
 export function useConversation(manifestId, options = {}) {
-  const { scope = 'manifest', canvasId = null, useImageContext = false, useMetadataContext = false } = options;
+  const {
+    scope = 'manifest',
+    canvasId = null,
+    useImageContext = false,
+    useMetadataContext = false,
+    engine = null,
+    canvasImageUrl = null,
+    modelId = '',
+  } = options;
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -158,6 +171,24 @@ export function useConversation(manifestId, options = {}) {
     });
 
     try {
+      // ── WebLLM in-browser path ───────────────────────────────────────────
+      if (engine) {
+        await handleWebLLMQuestion({
+          engine,
+          modelId,
+          question,
+          messages,
+          useImageContext,
+          canvasImageUrl,
+          streamingMessageRef: { current: streamingMessage },
+          setStreamingMessage,
+          addMessage,
+          abortControllerRef,
+        });
+        return;
+      }
+
+      // ── Remote backend / mock path ───────────────────────────────────────
       const baseEndpoint = import.meta.env.VITE_API_ENDPOINT || '/api/chat';
       const external = isExternalManifest(manifestId);
 
@@ -354,7 +385,7 @@ export function useConversation(manifestId, options = {}) {
     } finally {
       setIsLoading(false);
     }
-  }, [manifestId, scope, sessionId, messages, addMessage, streamingMessage, useImageContext, useMetadataContext]);
+  }, [manifestId, scope, sessionId, messages, addMessage, streamingMessage, useImageContext, useMetadataContext, engine, modelId, canvasImageUrl]);
 
   // Cancel streaming request
   const cancelRequest = useCallback(() => {
@@ -393,6 +424,87 @@ export function useConversation(manifestId, options = {}) {
     loadConversation,
     cancelRequest,
   };
+}
+
+/**
+ * Handles a question using an in-browser WebLLM engine.
+ * Streams token deltas into the same state shape the SSE path uses.
+ */
+async function handleWebLLMQuestion({
+  engine,
+  modelId,
+  question,
+  messages,
+  useImageContext,
+  canvasImageUrl,
+  streamingMessageRef,
+  setStreamingMessage,
+  addMessage,
+  abortControllerRef,
+}) {
+  // Build the user message content.  Vision models accept an array of content
+  // parts; text-only models accept a plain string.
+  let userContent;
+  if (useImageContext && canvasImageUrl) {
+    userContent = [
+      { type: 'text', text: question },
+      { type: 'image_url', image_url: { url: canvasImageUrl } },
+    ];
+  } else {
+    userContent = question;
+  }
+
+  // Translate conversation history into OpenAI message format
+  const historyMessages = messages.map(m => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  const chatMessages = [
+    ...historyMessages,
+    { role: 'user', content: userContent },
+  ];
+
+  // Create a fresh abort controller for cancellation support
+  abortControllerRef.current = new AbortController();
+
+  let currentContent = '';
+
+  const stream = await engine.chat.completions.create({
+    model: modelId,
+    messages: chatMessages,
+    stream: true,
+  });
+
+  for await (const chunk of stream) {
+    // Respect cancellation
+    if (abortControllerRef.current?.signal?.aborted) break;
+
+    const delta = chunk.choices?.[0]?.delta?.content || '';
+    if (delta) {
+      currentContent += delta;
+      setStreamingMessage(prev => ({
+        ...prev,
+        content: currentContent,
+      }));
+    }
+
+    // finish_reason === 'stop' signals completion
+    if (chunk.choices?.[0]?.finish_reason === 'stop') {
+      break;
+    }
+  }
+
+  // Finalise the message (no evidence from in-browser inference)
+  const finalMessage = {
+    id: streamingMessageRef.current?.id || `msg-${Date.now()}`,
+    role: 'assistant',
+    content: currentContent,
+    evidence: [],
+    timestamp: new Date().toISOString(),
+  };
+  addMessage(finalMessage);
+  setStreamingMessage(null);
 }
 
 /**
