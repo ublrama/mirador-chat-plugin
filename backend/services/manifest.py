@@ -2,11 +2,31 @@
 Utility functions for fetching and extracting text from IIIF manifests.
 """
 
+from urllib.parse import urlparse
+
 import httpx
+
+
+# Allowed URL schemes for manifest fetching
+_ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _validate_manifest_url(url: str) -> None:
+    """
+    Raise ValueError if the URL is not a safe http/https URL.
+    Prevents SSRF by rejecting file://, ftp://, and internal-only addresses
+    that could be reached from inside the container.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        raise ValueError(f"Manifest URL scheme not allowed: {parsed.scheme!r}")
+    if not parsed.netloc:
+        raise ValueError("Manifest URL has no host")
 
 
 async def fetch_manifest(manifest_url: str) -> dict:
     """Fetch and return a parsed IIIF manifest JSON."""
+    _validate_manifest_url(manifest_url)
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.get(manifest_url)
         response.raise_for_status()
@@ -21,7 +41,15 @@ def extract_manifest_text(manifest: dict) -> str:
     parts: list[str] = []
 
     def _lang_value(value) -> str:
-        """Resolve a language map or plain string to a single string."""
+        """
+        Resolve an IIIF language map or plain string to a single plain string.
+
+        Handles:
+        - Plain strings (returned as-is).
+        - IIIF 2 arrays: list of ``{"@value": "...", "@language": "..."}`` dicts
+          or plain strings.
+        - IIIF 3 language maps: ``{"en": ["..."], "nl": ["..."]}`` dicts.
+        """
         if isinstance(value, str):
             return value
         if isinstance(value, list):

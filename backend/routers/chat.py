@@ -72,9 +72,9 @@ async def _stream_sse(
 
         yield _sse({"type": "done"})
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("LLM streaming error")
-        yield _sse({"type": "error", "message": str(exc)})
+        yield _sse({"type": "error", "message": "An error occurred while generating the answer. Please try again."})
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -92,8 +92,8 @@ async def stream_endpoint(item_id: str, body: StreamRequest) -> StreamingRespons
         try:
             raw = await manifest.fetch_manifest(body.manifest_url)
             context = manifest.extract_manifest_text(raw)
-        except Exception:  # noqa: BLE001
-            logger.warning("Could not fetch manifest %s", body.manifest_url)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not fetch manifest %s: %s", body.manifest_url, exc)
 
     return StreamingResponse(
         _stream_sse(
@@ -121,8 +121,8 @@ async def external_endpoint(body: ExternalRequest) -> dict:
         try:
             raw = await manifest.fetch_manifest(body.manifest_url)
             context = manifest.extract_manifest_text(raw)
-        except Exception:  # noqa: BLE001
-            logger.warning("Could not fetch manifest %s", body.manifest_url)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not fetch manifest %s: %s", body.manifest_url, exc)
 
     answer = await llm.complete_answer(
         question=body.question,
