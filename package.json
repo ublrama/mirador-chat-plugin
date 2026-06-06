@@ -15,7 +15,8 @@
   },
   "scripts": {
     "build": "vite build --config vite.config.js",
-    "clean": "rm -rf ./dist",
+    "build:demo": "vite build --config vite.config.demo.js",
+    "clean": "rm -rf ./dist ./dist-demo",
     "start": "vite",
     "prepublishOnly": "npm run build"
   },

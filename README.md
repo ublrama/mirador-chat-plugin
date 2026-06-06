@@ -97,6 +97,67 @@ If WebGPU is not available the banner shows a "WebGPU not available – using ba
 - **First-load download** – model weights are large (0.5 GB to 7+ GB). The weights are cached via the browser's Cache Storage, so subsequent loads are instant.
 - **CORS on IIIF images** – when using a vision model with **Use image as context**, the IIIF image server must send permissive `Access-Control-Allow-Origin` headers so the browser can fetch the image.
 
+## Docker — all-in-one container
+
+The repository ships a multi-stage `Dockerfile` that packages the Mirador SPA
+**and** a FastAPI backend into a single container image. The backend uses
+[LiteLLM](https://docs.litellm.ai/) so you can point it at any LLM provider
+without changing code.
+
+### Quick start
+
+```bash
+# 1. Copy the environment template and fill in your API key
+cp .env.example .env
+# edit .env: set OPENAI_API_KEY (and optionally LLM_MODEL)
+
+# 2. Build and run
+docker compose up --build
+```
+
+Open <http://localhost:8000> — Mirador loads with the chat plugin connected to
+the backend.
+
+### Choosing a model
+
+Set `LLM_MODEL` in `.env` to any
+[LiteLLM model string](https://docs.litellm.ai/docs/providers):
+
+| Provider | Example value |
+|---|---|
+| OpenAI (default) | `gpt-4o-mini` |
+| OpenAI GPT-4o | `gpt-4o` |
+| Anthropic Claude | `anthropic/claude-3-haiku-20240307` |
+| Ollama (local) | `ollama/llama3` |
+| Azure OpenAI | `azure/<your-deployment>` |
+
+For Ollama, make sure `OLLAMA_API_BASE` points to your running instance
+(default: `http://host.docker.internal:11434`).
+
+### Backend API
+
+The FastAPI backend exposes two endpoints that the plugin calls automatically:
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/chat/{item_id}/stream` | SSE stream for internal manifests |
+| `POST` | `/api/chat/external` | Plain JSON for external manifests |
+
+Interactive docs are available at <http://localhost:8000/docs>.
+
+### Building without Docker
+
+```bash
+# Build the demo SPA
+npm run build:demo   # outputs to dist-demo/
+
+# Install Python dependencies
+pip install -r backend/requirements.txt
+
+# Run the backend (serves the SPA + API)
+uvicorn backend.main:app --reload
+```
+
 ## Development
 
 ```bash
