@@ -9,6 +9,7 @@ A [Mirador 4](https://github.com/ProjectMirador/mirador) plugin that adds an AI 
 - **Evidence panel** linking AI answers back to canvas annotations
 - **Scope selector** – search across the entire manifest or restrict to the current canvas
 - **Image & metadata context** toggles that enrich the prompt sent to the LLM
+- **WebLLM in-browser mode** – run inference entirely in the browser via WebGPU (no backend required)
 - **Mock API fallback** – the plugin works out of the box without a backend
 
 ## Installation
@@ -60,6 +61,103 @@ The plugin expects the backend to:
 
 When the backend is unreachable the plugin automatically falls back to the built-in mock streaming API.
 
+### WebLLM in-browser mode
+
+The plugin optionally supports fully in-browser AI inference powered by [WebLLM](https://github.com/mlc-ai/web-llm) and WebGPU. In this mode no backend server is required: the model runs locally on the user's GPU.
+
+Enable it by setting two environment variables before building or starting the dev server:
+
+```
+VITE_WEBLLM_ENABLED=true
+VITE_WEBLLM_MODEL=Llama-3.2-1B-Instruct-q4f16_1-MLC
+```
+
+When enabled the chat header shows a **Load model** button. Clicking it downloads the model weights (cached in the browser after the first load) and starts the engine. Subsequent questions are answered locally without any network call.
+
+You can also use a vision-capable model to send the current canvas image alongside the question:
+
+```
+VITE_WEBLLM_MODEL=Llama-3.2-11B-Vision-Instruct-q4f16_1-MLC
+```
+
+Then enable the **Use image as context** toggle in the chat header.
+
+#### Browser requirements
+
+| Requirement | Notes |
+|---|---|
+| **WebGPU** | Chrome 113+, Edge 113+, Chrome/Edge on Android 125+. Firefox and Safari have limited/no support. |
+| **GPU VRAM** | ~500 MB for 1 B models; ~4–7 GB for 7–11 B vision models. Integrated GPUs may struggle with larger models. |
+
+If WebGPU is not available the banner shows a "WebGPU not available – using backend" message and the plugin falls back to the normal backend/mock path automatically.
+
+#### Limitations of in-browser mode
+
+- **No evidence panel** – the local model cannot perform retrieval-augmented generation (RAG), so the evidence sidebar will be empty. Evidence links are only available when using the backend path.
+- **First-load download** – model weights are large (0.5 GB to 7+ GB). The weights are cached via the browser's Cache Storage, so subsequent loads are instant.
+- **CORS on IIIF images** – when using a vision model with **Use image as context**, the IIIF image server must send permissive `Access-Control-Allow-Origin` headers so the browser can fetch the image.
+
+## Docker — all-in-one container
+
+The repository ships a multi-stage `Dockerfile` that packages the Mirador SPA
+**and** a FastAPI backend into a single container image. The backend uses
+[LiteLLM](https://docs.litellm.ai/) so you can point it at any LLM provider
+without changing code.
+
+### Quick start
+
+```bash
+# 1. Copy the environment template and fill in your API key
+cp .env.example .env
+# edit .env: set OPENAI_API_KEY (and optionally LLM_MODEL)
+
+# 2. Build and run
+docker compose up --build
+```
+
+Open <http://localhost:8000> — Mirador loads with the chat plugin connected to
+the backend.
+
+### Choosing a model
+
+Set `LLM_MODEL` in `.env` to any
+[LiteLLM model string](https://docs.litellm.ai/docs/providers):
+
+| Provider | Example value |
+|---|---|
+| OpenAI (default) | `gpt-4o-mini` |
+| OpenAI GPT-4o | `gpt-4o` |
+| Anthropic Claude | `anthropic/claude-3-haiku-20240307` |
+| Ollama (local) | `ollama/llama3` |
+| Azure OpenAI | `azure/<your-deployment>` |
+
+For Ollama, make sure `OLLAMA_API_BASE` points to your running instance
+(default: `http://host.docker.internal:11434`).
+
+### Backend API
+
+The FastAPI backend exposes two endpoints that the plugin calls automatically:
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/chat/{item_id}/stream` | SSE stream for internal manifests |
+| `POST` | `/api/chat/external` | Plain JSON for external manifests |
+
+Interactive docs are available at <http://localhost:8000/docs>.
+
+### Building without Docker
+
+```bash
+# Build the demo SPA
+npm run build:demo   # outputs to dist-demo/
+
+# Install Python dependencies
+pip install -r backend/requirements.txt
+
+# Run the backend (serves the SPA + API)
+uvicorn backend.main:app --reload
+```
+
 ## Development
 
 ```bash
@@ -100,7 +198,8 @@ src/
 │   └── StreamingMessage.jsx
 └── hooks/
     ├── useCanvasNavigation.js     # Canvas navigation & highlight logic
-    └── useConversation.js         # Conversation state & SSE streaming
+    ├── useConversation.js         # Conversation state & SSE streaming
+    └── useWebLLMEngine.js         # WebLLM in-browser engine lifecycle
 ```
 
 ## License

@@ -5,48 +5,51 @@ import {
   Typography,
   IconButton,
   Tooltip,
-  Divider,
   Alert,
   Button,
   Snackbar,
-  Badge,
   FormControlLabel,
   Switch,
+  LinearProgress,
+  Chip,
 } from '@mui/material';
-import ImageSearchIcon from '@mui/icons-material/ImageSearch';
 import DescriptionIcon from '@mui/icons-material/Description';
+import MemoryIcon from '@mui/icons-material/Memory';
 import { styled } from '@mui/material/styles';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import SaveIcon from '@mui/icons-material/Save';
-import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import { useConversation } from '../hooks/useConversation';
 import { useCanvasNavigation } from '../hooks/useCanvasNavigation';
-import { ScopeSelector } from './ScopeSelector';
+import { useWebLLMEngine } from '../hooks/useWebLLMEngine';
 import { ChatMessage } from './ChatMessage';
 import { StreamingMessage } from './StreamingMessage';
 import { ChatInput } from './ChatInput';
-import { EvidencePanel } from './EvidencePanel';
 
 const ChatContainer = styled(Box)(({ theme }) => ({
   display: 'flex',
+  width: '100%',
   height: '100%',
-  maxHeight: 'none',
+  // Safety cap: even if Mirador's companion-window content area is a
+  // scroll-its-content container (no fixed height), this prevents the chat
+  // box from growing taller than the viewport as the LLM streams text in.
+  maxHeight: '100vh',
+  minHeight: 0,
   backgroundColor: theme.palette.background.paper,
   borderRadius: theme.shape.borderRadius,
   overflow: 'hidden',
   boxShadow: theme.shadows[3],
   gap: 0,
-  width: '100%',
-  flex: 1, // Add this to make container grow
+  flex: 1,
 }));
 
 const ChatMainPanel = styled(Box)(({ theme }) => ({
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
-  minWidth: 400,
+  minWidth: 0,
   maxWidth: 'none',
   width: '100%',
+  height: '100%',
+  minHeight: 0, // Critical: allow flex child (MessageArea) to scroll instead of expanding
   overflow: 'hidden',
 }));
 
@@ -54,10 +57,12 @@ const ChatHeader = styled(Box)(({ theme }) => ({
   padding: theme.spacing(2),
   borderBottom: `1px solid ${theme.palette.divider}`,
   backgroundColor: theme.palette.background.default,
+  flexShrink: 0,
 }));
 
 const MessageArea = styled(Box)(({ theme }) => ({
-  flex: 1,
+  flex: '1 1 0',
+  minHeight: 0, // Critical: prevents the area from growing with content; enables scroll
   overflowY: 'auto',
   overflowX: 'hidden', // Prevent horizontal scroll
   padding: theme.spacing(2),
@@ -65,51 +70,17 @@ const MessageArea = styled(Box)(({ theme }) => ({
   wordWrap: 'break-word', // Wrap long text
 }));
 
-const EvidenceSidebar = styled(Box)(({ theme, isOpen }) => ({
-  width: isOpen ? 350 : 0,
-  borderLeft: `1px solid ${theme.palette.divider}`,
-  backgroundColor: theme.palette.background.paper,
-  transition: theme.transitions.create(['width'], {
-    easing: theme.transitions.easing.sharp,
-    duration: theme.transitions.duration.standard,
-  }),
-  overflow: 'hidden',
-  flexShrink: 0, // Prevent shrinking
-  [theme.breakpoints.down('md')]: {
-    width: isOpen ? 300 : 0,
-  },
-}));
-
-const EvidenceSidebarCollapsed = styled(Box)(({ theme }) => ({
-  width: 0,
-  overflow: 'hidden',
-  transition: theme.transitions.create(['width', 'margin'], {
-    easing: theme.transitions.easing.sharp,
-    duration: theme.transitions.duration.enteringScreen,
-  }),
-}));
-
-const EvidenceToggleButton = styled(IconButton)(({ theme }) => ({
-  position: 'absolute',
-  right: 0,
-  top: '50%',
-  transform: 'translateY(-50%)',
-  backgroundColor: theme.palette.background.paper,
-  border: `1px solid ${theme.palette.divider}`,
-  borderRight: 'none',
-  borderTopRightRadius: 0,
-  borderBottomRightRadius: 0,
-  padding: theme.spacing(1),
-  '&:hover': {
-    backgroundColor: theme.palette.action.hover,
-  },
-  zIndex: 1,
-}));
-
 const HeaderActions = styled(Box)(({ theme }) => ({
   display: 'flex',
   gap: theme.spacing(1),
   alignItems: 'center',
+}));
+
+const WebLLMBannerBox = styled(Box)(({ theme }) => ({
+  padding: theme.spacing(1, 2),
+  borderBottom: `1px solid ${theme.palette.divider}`,
+  backgroundColor: theme.palette.background.default,
+  flexShrink: 0,
 }));
 
 /**
@@ -134,22 +105,40 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
 
 
 
-  const [scope, setScope] = useState('manifest');
-  const [useImageContext, setUseImageContext] = useState(false);
+  // Scope is fixed to the current canvas — questions are always about the
+  // page the user is looking at.
+  const scope = 'canvas';
+  // Image context is always enabled — the AI uses the current canvas image
+  // automatically whenever one is available. The user only opts in/out of
+  // including manifest metadata.
+  const useImageContext = true;
   const [useMetadataContext, setUseMetadataContext] = useState(false);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
-  const [evidencePanelOpen, setEvidencePanelOpen] = useState(false);
   const messageAreaRef = useRef(null);
   const chatInputRef = useRef(null);
 
   // Custom hooks - useCanvasNavigation will read canvasIndex from state
   const canvasNav = useCanvasNavigation(state, windowId, actions);
+
+  // WebLLM in-browser engine (optional; only active when VITE_WEBLLM_ENABLED=true)
+  const webLLMEnabled = import.meta.env.VITE_WEBLLM_ENABLED === 'true';
+  const webLLM = useWebLLMEngine();
+  const resolvedEngine = webLLMEnabled ? (webLLM.engine || null) : null;
+
+  // Resolve the current canvas image URL for vision-model use
+  const canvasImageUrl = useImageContext && canvasNav.currentCanvas
+    ? canvasNav.getCanvasThumbnail(canvasNav.currentCanvas.id)
+    : null;
+
   const conversation = useConversation(manifestId, {
     scope,
     canvasId: canvasNav.currentCanvas?.id,
     useImageContext,
     useMetadataContext,
+    engine: resolvedEngine,
+    canvasImageUrl,
+    modelId: webLLM.modelId,
   });
 
   useEffect(() => {
@@ -192,24 +181,11 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
     streamingMessage,
     isLoading,
     error,
-    sessionId,
     sendQuestion,
     clearHistory,
     saveConversation,
     cancelRequest,
   } = conversation;
-
-  // Log canvas selection when scope is 'canvas' and canvas info changes
-  useEffect(() => {
-    if (scope === 'canvas' && canvasNav.currentCanvas) {
-      console.log('[Chat Plugin] Canvas selected in scope:', {
-        canvasId: canvasNav.currentCanvas.id,
-        canvasIndex: canvasNav.currentCanvas.index,
-        canvasLabel: canvasNav.currentCanvas.label,
-        scope: scope,
-      });
-    }
-  }, [scope, canvasNav.currentCanvas]);
 
   // Return focus to input when AI finishes answering
   useEffect(() => {
@@ -229,14 +205,6 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
     await sendQuestion(message);
   };
 
-  const handleNavigateToEvidence = (evidence) => {
-    if (evidence.annotation) {
-      canvasNav.navigateToAnnotation(evidence.annotation);
-    } else if (evidence.canvas_id) {
-      canvasNav.navigateToCanvas(evidence.canvas_id);
-    }
-  };
-
   const handleNewChat = () => {
     if (messages.length > 0) {
       // Save current conversation before clearing
@@ -247,25 +215,6 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
     clearHistory();
   };
 
-  const handleSaveConversation = () => {
-    saveConversation();
-    setSnackbarMessage('Conversation saved successfully');
-    setSnackbarOpen(true);
-  };
-
-  const handleToggleEvidencePanel = () => {
-    setEvidencePanelOpen(!evidencePanelOpen);
-  };
-
-  // Get all evidence from messages
-  const allEvidence = messages
-    .filter(m => m.role === 'assistant' && m.evidence)
-    .flatMap(m => m.evidence || []);
-
-  // Add streaming message evidence if available
-  if (streamingMessage?.evidence) {
-    allEvidence.push(...streamingMessage.evidence);
-  }
 
   return (
     <ChatContainer>
@@ -277,12 +226,6 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
             </Typography>
             
             <HeaderActions>
-              <Tooltip title="Save conversation">
-                <IconButton size="small" onClick={handleSaveConversation}>
-                  <SaveIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-              
               <Tooltip title="New conversation">
                 <IconButton size="small" onClick={handleNewChat}>
                   <RefreshIcon fontSize="small" />
@@ -291,47 +234,6 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
             </HeaderActions>
           </Box>
 
-          <ScopeSelector
-            scope={scope}
-            onScopeChange={setScope}
-            currentCanvas={canvasNav.currentCanvas}
-            disabled={isLoading}
-          />
-
-          <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-            <Tooltip title={
-              !canvasNav.currentCanvas
-                ? 'Navigate to a canvas page first to enable image context'
-                : 'Send the current canvas image to the AI as additional context'
-            }>
-              <span>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={useImageContext}
-                    onChange={(e) => {
-                      const enabled = e.target.checked;
-                      setUseImageContext(enabled);
-                      if (enabled) setScope('canvas');
-                    }}
-                    disabled={isLoading || !canvasNav.currentCanvas}
-                    size="small"
-                    color="primary"
-                  />
-                }
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <ImageSearchIcon fontSize="small" sx={{ color: useImageContext ? 'primary.main' : 'text.secondary' }} />
-                    <Typography variant="body2" color={useImageContext ? 'primary' : 'text.secondary'}>
-                      Use image as context
-                    </Typography>
-                  </Box>
-                }
-                slotProps={{ typography: { component: 'span' } }}
-              />
-              </span>
-            </Tooltip>
-          </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
             <Tooltip title="Include manifest metadata (title, description, date, etc.) as context for the AI">
@@ -359,6 +261,65 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
           </Box>
         </ChatHeader>
 
+        {/* WebLLM status banner – shown only when VITE_WEBLLM_ENABLED=true */}
+        {webLLMEnabled && (
+          <WebLLMBannerBox>
+            {webLLM.status === 'idle' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <MemoryIcon fontSize="small" color="action" />
+                <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+                  In-browser AI available ({webLLM.modelId})
+                </Typography>
+                <Button size="small" variant="outlined" onClick={webLLM.initEngine}>
+                  Load model
+                </Button>
+              </Box>
+            )}
+
+            {webLLM.status === 'loading' && (
+              <Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                  <MemoryIcon fontSize="small" color="primary" />
+                  <Typography variant="caption" color="primary" sx={{ flex: 1 }}>
+                    {webLLM.progressText || 'Loading model…'} ({webLLM.progress}%)
+                  </Typography>
+                </Box>
+                <LinearProgress variant="determinate" value={webLLM.progress} />
+              </Box>
+            )}
+
+            {webLLM.status === 'ready' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <MemoryIcon fontSize="small" color="success" />
+                <Typography variant="caption" color="success.main" sx={{ flex: 1 }}>
+                  In-browser AI ready
+                </Typography>
+                <Chip label={webLLM.modelId} size="small" variant="outlined" />
+              </Box>
+            )}
+
+            {webLLM.status === 'unsupported' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <MemoryIcon fontSize="small" color="disabled" />
+                <Typography variant="caption" color="text.disabled">
+                  WebGPU not available – using backend
+                </Typography>
+              </Box>
+            )}
+
+            {webLLM.status === 'error' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="caption" color="error" sx={{ flex: 1 }}>
+                  Failed to load model: {webLLM.error}
+                </Typography>
+                <Button size="small" color="error" onClick={webLLM.initEngine}>
+                  Retry
+                </Button>
+              </Box>
+            )}
+          </WebLLMBannerBox>
+        )}
+
         <MessageArea ref={messageAreaRef}>
           {error && (
             <Alert severity="error" sx={{ mb: 2 }}>
@@ -382,7 +343,7 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
                 Welcome to AI Chat Assistant
               </Typography>
               <Typography variant="body2" color="textSecondary" paragraph>
-                Ask questions about the manifest to get AI-powered answers with evidence.
+                Ask questions about the current page to get AI-powered answers.
               </Typography>
               <Typography variant="caption" color="textSecondary">
                 Examples:
@@ -408,37 +369,16 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
           )}
         </MessageArea>
 
-        <ChatInput
-          onSendMessage={handleSendMessage}
-          onCancel={cancelRequest}
-          disabled={false}
-          isLoading={isLoading}
-          inputRef={chatInputRef}
-        />
-      </ChatMainPanel>
-
-      {/* Evidence Panel Toggle Button (shown when collapsed) */}
-      {!evidencePanelOpen && (
-        <Box sx={{ position: 'relative' }}>
-          <EvidenceToggleButton onClick={handleToggleEvidencePanel}>
-            <Badge badgeContent={allEvidence.length} color="primary">
-              <ChevronLeftIcon />
-            </Badge>
-          </EvidenceToggleButton>
+        <Box sx={{ flexShrink: 0 }}>
+          <ChatInput
+            onSendMessage={handleSendMessage}
+            onCancel={cancelRequest}
+            disabled={false}
+            isLoading={isLoading}
+            inputRef={chatInputRef}
+          />
         </Box>
-      )}
-
-      {/* Evidence Sidebar */}
-      <EvidenceSidebar isOpen={evidencePanelOpen}>
-        {evidencePanelOpen && (
-            <EvidencePanel
-                evidence={allEvidence}
-                onNavigateToEvidence={handleNavigateToEvidence}
-                onClose={handleToggleEvidencePanel}
-            />
-        )}
-      </EvidenceSidebar>
-
+      </ChatMainPanel>
 
 
       <Snackbar
