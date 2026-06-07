@@ -134,6 +134,50 @@ Set `LLM_MODEL` in `.env` to any
 For Ollama, make sure `OLLAMA_API_BASE` points to your running instance
 (default: `http://host.docker.internal:11434`).
 
+### Running Ollama in a container
+
+You can run Ollama as a sidecar container — no local Ollama installation
+required. The container pulls the chosen model on first start and caches
+the weights in a Docker volume so subsequent restarts are instant.
+
+**1. Enable the feature in `.env`:**
+
+```ini
+USE_OLLAMA=true
+COMPOSE_PROFILES=ollama
+OLLAMA_MODEL=gemma4:e2b   # any tag from https://ollama.com/library
+```
+
+**2. Build and start both services:**
+
+```bash
+docker compose up --build
+```
+
+`COMPOSE_PROFILES=ollama` (set in `.env`) activates the Ollama service
+automatically, so no extra flags are needed on the command line.
+
+> **Note:** The first start downloads the model weights (can be several GB).
+> Watch the `ollama` container logs to track progress:
+> ```bash
+> docker compose logs -f ollama
+> ```
+> The app is available immediately at <http://localhost:8000>, but chat
+> requests will fail until the model pull completes.
+
+To switch to a different model, change `OLLAMA_MODEL` in `.env` and restart:
+
+```bash
+docker compose down && docker compose up --build
+```
+
+Previously pulled models remain cached in the `ollama_data` volume.
+To free the disk space, remove the volume:
+
+```bash
+docker compose down -v
+```
+
 ### Backend API
 
 The FastAPI backend exposes two endpoints that the plugin calls automatically:

@@ -2,8 +2,11 @@
 LiteLLM wrapper for the Mirador chat backend.
 
 Model selection (in priority order):
-1. ``LLM_MODEL`` environment variable (e.g. "ollama/llama3", "anthropic/claude-3-haiku-20240307")
-2. Falls back to ``gpt-4o-mini`` (OpenAI) when not set.
+1. ``USE_OLLAMA=true`` – uses the containerised Ollama service.
+   ``OLLAMA_MODEL`` sets the model name (default: ``gemma4:e2b``).
+   ``OLLAMA_API_BASE`` sets the Ollama URL (default: ``http://ollama:11434``).
+2. ``LLM_MODEL`` environment variable (e.g. "anthropic/claude-3-haiku-20240307")
+3. Falls back to ``gpt-4o-mini`` (OpenAI) when nothing is set.
 
 For OpenAI, set ``OPENAI_API_KEY``.
 For other providers, consult the LiteLLM docs:
@@ -19,9 +22,24 @@ import litellm
 litellm.set_verbose = os.getenv("LITELLM_VERBOSE", "false").lower() == "true"
 
 DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_OLLAMA_MODEL = "gemma4:e2b"
+DEFAULT_OLLAMA_API_BASE = "http://ollama:11434"
 
 
 def _model() -> str:
+    """Return the LiteLLM model string to use for this request.
+
+    When ``USE_OLLAMA=true`` the model is always ``ollama/<OLLAMA_MODEL>``.
+    ``OLLAMA_API_BASE`` is also defaulted to the internal Docker service name
+    (``http://ollama:11434``) if not already set by the caller.
+    """
+    if os.getenv("USE_OLLAMA", "false").lower() == "true":
+        # Default the Ollama URL to the containerised service unless the user
+        # has already pointed it at an external instance.
+        if not os.getenv("OLLAMA_API_BASE"):
+            os.environ["OLLAMA_API_BASE"] = DEFAULT_OLLAMA_API_BASE
+        ollama_model = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+        return f"ollama/{ollama_model}"
     return os.getenv("LLM_MODEL", DEFAULT_MODEL)
 
 
