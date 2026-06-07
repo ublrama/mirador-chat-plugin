@@ -18,15 +18,20 @@ const MessageContainer = styled(Box)(({ theme }) => ({
   justifyContent: 'flex-start',
   marginBottom: theme.spacing(2),
   gap: theme.spacing(1),
+  minWidth: 0,
+  width: '100%',
 }));
 
 const MessageBubble = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(1.5, 2),
   maxWidth: '75%',
+  minWidth: 0,
   backgroundColor: theme.palette.background.default,
   color: theme.palette.text.primary,
   borderRadius: theme.spacing(2),
   wordWrap: 'break-word',
+  overflowWrap: 'anywhere',
+  wordBreak: 'break-word',
   whiteSpace: 'pre-wrap',
   position: 'relative',
 }));
@@ -98,11 +103,11 @@ export function StreamingMessage({ message }) {
           <SmartToyIcon fontSize="small" />
         </IconContainer>
 
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: 0, flex: 1, overflow: 'hidden' }}>
           <MessageBubble elevation={1}>
             {content ? (
                 <>
-                  <Typography variant="body1" component="div">
+                  <Typography variant="body1" component="div" sx={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
                     <StreamingText>{content}</StreamingText>
                     {!isComplete && <Cursor />}
                   </Typography>

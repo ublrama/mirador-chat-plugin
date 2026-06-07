@@ -10,19 +10,27 @@ const MessageContainer = styled(Box)(({ theme, role }) => ({
   justifyContent: role === 'user' ? 'flex-end' : 'flex-start',
   marginBottom: theme.spacing(2),
   gap: theme.spacing(1),
+  // Critical: allow flex children to shrink so the bubble respects maxWidth
+  // and long words/URLs can wrap instead of forcing the chat width to grow.
+  minWidth: 0,
+  width: '100%',
 }));
 
 const MessageBubble = styled(Paper)(({ theme, role }) => ({
   padding: theme.spacing(1.5, 2),
   maxWidth: '75%',
-  backgroundColor: role === 'user' 
-    ? theme.palette.primary.main 
+  minWidth: 0,
+  backgroundColor: role === 'user'
+    ? theme.palette.primary.main
     : theme.palette.background.default,
-  color: role === 'user' 
-    ? theme.palette.primary.contrastText 
+  color: role === 'user'
+    ? theme.palette.primary.contrastText
     : theme.palette.text.primary,
   borderRadius: theme.spacing(2),
+  // Wrap long content (including unbroken strings like URLs or hashes)
   wordWrap: 'break-word',
+  overflowWrap: 'anywhere',
+  wordBreak: 'break-word',
   whiteSpace: 'pre-wrap',
 }));
 
@@ -72,9 +80,9 @@ export function ChatMessage({ message }) {
         </IconContainer>
       )}
       
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: role === 'user' ? 'flex-end' : 'flex-start' }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: role === 'user' ? 'flex-end' : 'flex-start', minWidth: 0, flex: 1, overflow: 'hidden' }}>
         <MessageBubble elevation={1} role={role}>
-          <Typography variant="body1" component="div">
+          <Typography variant="body1" component="div" sx={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
             {content}
           </Typography>
         </MessageBubble>

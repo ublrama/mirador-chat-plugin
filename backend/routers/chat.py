@@ -33,6 +33,7 @@ class StreamRequest(BaseModel):
     use_metadata_context: bool = False
     conversation_history: list[dict] = []
     manifest_url: str | None = None  # set by the demo when it injects the URL
+    image_url: str | None = None  # current canvas image URL (for vision models)
 
 
 class ExternalRequest(BaseModel):
@@ -42,6 +43,7 @@ class ExternalRequest(BaseModel):
     canvas_id: str | None = None
     use_image_context: bool = False
     use_metadata_context: bool = False
+    image_url: str | None = None  # current canvas image URL (for vision models)
 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────────
@@ -100,7 +102,7 @@ async def stream_endpoint(item_id: str, body: StreamRequest) -> StreamingRespons
             question=body.question,
             context=context,
             conversation_history=body.conversation_history,
-            image_url=None,  # image context not supported on the SSE path yet
+            image_url=body.image_url if body.use_image_context else None,
         ),
         media_type="text/event-stream",
         headers={
@@ -127,6 +129,7 @@ async def external_endpoint(body: ExternalRequest) -> dict:
     answer = await llm.complete_answer(
         question=body.question,
         context=context,
+        image_url=body.image_url if body.use_image_context else None,
     )
 
     return {"answer": answer, "evidence": []}

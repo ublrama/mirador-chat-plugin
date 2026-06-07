@@ -30,10 +30,7 @@ const AnswerBox = styled(Box)(({ theme }) => ({
   borderRadius: theme. shape.borderRadius,
 }));
 
-/**
- * Extract item ID from manifest URL
- * e.g., "http://localhost:8083/iiif_manifest/item:3267264/manifest/..." => "item:3267264"
- */
+
 function extractItemId(manifestId) {
   if (!manifestId) return '';
 

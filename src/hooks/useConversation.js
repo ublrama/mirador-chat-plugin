@@ -212,6 +212,7 @@ export function useConversation(manifestId, options = {}) {
               canvas_id: canvasIdRef.current,
               use_image_context: useImageContext,
               use_metadata_context: useMetadataContext,
+              image_url: canvasImageUrl,
             }),
             signal: abortControllerRef.current.signal,
           });
@@ -232,6 +233,7 @@ export function useConversation(manifestId, options = {}) {
               session_id: sessionId,
               use_image_context: useImageContext,
               use_metadata_context: useMetadataContext,
+              image_url: canvasImageUrl,
               conversation_history: messages.map(m => ({
                 role: m.role,
                 content: m.content,
