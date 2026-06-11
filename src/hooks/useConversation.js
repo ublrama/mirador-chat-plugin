@@ -31,7 +31,18 @@ export function useConversation(manifestId, options = {}) {
   const eventSourceRef = useRef(null);
   const abortControllerRef = useRef(null);
   const canvasIdRef = useRef(canvasId);
-  const prevCanvasIdRef = useRef(canvasId); // track previous to detect changes
+  const prevCanvasIdRef = useRef(canvasId);
+  const prevManifestIdRef = useRef(manifestId);
+
+  // Always keep the latest canvasImageUrl accessible inside callbacks
+  const canvasImageUrlRef = useRef(canvasImageUrl);
+  useEffect(() => {
+    canvasImageUrlRef.current = canvasImageUrl;
+  }, [canvasImageUrl]);
+
+  // Stores the image URL that was introduced at the start of the current session.
+  // Follow-up messages inject it into conversation history rather than re-sending it.
+  const sessionImageUrlRef = useRef(null);
 
   // Update canvasIdRef when canvasId changes
   useEffect(() => {
@@ -55,23 +66,40 @@ export function useConversation(manifestId, options = {}) {
     return newId;
   });
 
-  // Reset session when canvas changes (skip on initial mount)
+  // ── Reset session on canvas change ────────────────────────────────────────
   useEffect(() => {
     if (prevCanvasIdRef.current !== canvasId) {
       prevCanvasIdRef.current = canvasId;
       if (canvasId) {
-        // Cancel any in-flight request
         if (abortControllerRef.current) abortControllerRef.current.abort();
-        // Start a fresh session for the new canvas
         const newId = generateSessionId();
         sessionStorage.setItem('chatSessionId', newId);
         setSessionId(newId);
         setMessages([]);
         setError(null);
         setStreamingMessage(null);
+        // Reset session image — will be captured fresh on the first send
+        sessionImageUrlRef.current = null;
       }
     }
   }, [canvasId]);
+
+  // ── Reset session on manifest change ──────────────────────────────────────
+  useEffect(() => {
+    if (prevManifestIdRef.current !== manifestId) {
+      prevManifestIdRef.current = manifestId;
+      if (manifestId) {
+        if (abortControllerRef.current) abortControllerRef.current.abort();
+        const newId = generateSessionId();
+        sessionStorage.setItem('chatSessionId', newId);
+        setSessionId(newId);
+        setMessages([]);
+        setError(null);
+        setStreamingMessage(null);
+        sessionImageUrlRef.current = null;
+      }
+    }
+  }, [manifestId]);
 
   // Load conversation history from localStorage
   useEffect(() => {
@@ -151,15 +179,6 @@ export function useConversation(manifestId, options = {}) {
     };
     addMessage(userMessage);
 
-    // Log the question and canvas context
-    console.log('[Chat Plugin] Sending question:', {
-      question: question,
-      scope: scope,
-      canvasId: canvasIdRef.current,
-      sessionId: sessionId,
-      manifestId: manifestId,
-    });
-
     setIsLoading(true);
     setError(null);
     setStreamingMessage({
@@ -170,16 +189,52 @@ export function useConversation(manifestId, options = {}) {
       timestamp: new Date().toISOString(),
     });
 
+    // ── Image-URL strategy ────────────────────────────────────────────────────
+    // First message of a session: send image_url at the request level.
+    //   The LLM receives the question + image together.
+    // Follow-up messages: inject the session image into the first history entry
+    //   as a multimodal content array so the LLM still has the image in context,
+    //   but we don't pay the cost of re-transmitting it every time.
+    const isFirstMessage = messages.length === 0;
+
+    if (isFirstMessage && useImageContext) {
+      // Capture the image URL for this session; future sends use it from the ref
+      sessionImageUrlRef.current = canvasImageUrlRef.current;
+    }
+
+    const requestImageUrl = isFirstMessage ? sessionImageUrlRef.current : null;
+
+    // Build conversation history, injecting the session image into the first
+    // user turn so the LLM context window retains it on follow-ups.
+    const buildHistory = (msgs) => {
+      if (!sessionImageUrlRef.current || msgs.length === 0) {
+        return msgs.map(m => ({ role: m.role, content: m.content }));
+      }
+      return msgs.map((m, i) => {
+        if (i === 0 && m.role === 'user') {
+          return {
+            role: 'user',
+            content: [
+              { type: 'text', text: m.content },
+              { type: 'image_url', image_url: { url: sessionImageUrlRef.current } },
+            ],
+          };
+        }
+        return { role: m.role, content: m.content };
+      });
+    };
+
     try {
-      // ── WebLLM in-browser path ───────────────────────────────────────────
+      // ── WebLLM in-browser path ─────────────────────────────────────────────
       if (engine) {
         await handleWebLLMQuestion({
           engine,
           modelId,
           question,
           messages,
-          useImageContext,
-          canvasImageUrl,
+          useImageContext: isFirstMessage && useImageContext,
+          canvasImageUrl: requestImageUrl,
+          sessionImageUrl: !isFirstMessage ? sessionImageUrlRef.current : null,
           streamingMessageRef: { current: streamingMessage },
           setStreamingMessage,
           addMessage,
@@ -210,9 +265,9 @@ export function useConversation(manifestId, options = {}) {
               question,
               scope,
               canvas_id: canvasIdRef.current,
-              use_image_context: useImageContext,
+              use_image_context: isFirstMessage && useImageContext,
               use_metadata_context: useMetadataContext,
-              image_url: canvasImageUrl,
+              image_url: requestImageUrl,
             }),
             signal: abortControllerRef.current.signal,
           });
@@ -231,13 +286,11 @@ export function useConversation(manifestId, options = {}) {
               scope,
               canvas_id: canvasIdRef.current,
               session_id: sessionId,
-              use_image_context: useImageContext,
+              use_image_context: isFirstMessage && useImageContext,
               use_metadata_context: useMetadataContext,
-              image_url: canvasImageUrl,
-              conversation_history: messages.map(m => ({
-                role: m.role,
-                content: m.content,
-              })),
+              image_url: requestImageUrl,
+              // History has the session image injected into the first user turn
+              conversation_history: buildHistory(messages),
             }),
             signal: abortControllerRef.current.signal,
           });
@@ -387,7 +440,7 @@ export function useConversation(manifestId, options = {}) {
     } finally {
       setIsLoading(false);
     }
-  }, [manifestId, scope, sessionId, messages, addMessage, streamingMessage, useImageContext, useMetadataContext, engine, modelId, canvasImageUrl]);
+  }, [manifestId, scope, sessionId, messages, addMessage, streamingMessage, useImageContext, useMetadataContext, engine, modelId]);
 
   // Cancel streaming request
   const cancelRequest = useCallback(() => {
@@ -439,13 +492,15 @@ async function handleWebLLMQuestion({
   messages,
   useImageContext,
   canvasImageUrl,
+  sessionImageUrl,   // image URL for injecting into history on follow-ups
   streamingMessageRef,
   setStreamingMessage,
   addMessage,
   abortControllerRef,
 }) {
-  // Build the user message content.  Vision models accept an array of content
-  // parts; text-only models accept a plain string.
+  // Build the user message content.
+  // First message: include the image directly with the question.
+  // Follow-ups: image is injected into the first history turn below.
   let userContent;
   if (useImageContext && canvasImageUrl) {
     userContent = [
@@ -456,11 +511,19 @@ async function handleWebLLMQuestion({
     userContent = question;
   }
 
-  // Translate conversation history into OpenAI message format
-  const historyMessages = messages.map(m => ({
-    role: m.role,
-    content: m.content,
-  }));
+  // Translate conversation history; inject session image into first user turn
+  const historyMessages = messages.map((m, i) => {
+    if (i === 0 && m.role === 'user' && sessionImageUrl) {
+      return {
+        role: 'user',
+        content: [
+          { type: 'text', text: m.content },
+          { type: 'image_url', image_url: { url: sessionImageUrl } },
+        ],
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
 
   const chatMessages = [
     ...historyMessages,

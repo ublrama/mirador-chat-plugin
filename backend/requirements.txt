@@ -3,3 +3,6 @@ uvicorn[standard]>=0.30.0
 litellm>=1.40.0
 httpx>=0.27.0
 python-dotenv>=1.0.0
+# Required by LiteLLM to convert image_url payloads into base64 for Ollama
+# (and other providers that don't accept remote URLs directly).
+Pillow>=10.0.0

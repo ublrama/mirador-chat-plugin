@@ -26,13 +26,13 @@ const MessageBubble = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(1.5, 2),
   maxWidth: '75%',
   minWidth: 0,
+  overflow: 'hidden',
   backgroundColor: theme.palette.background.default,
   color: theme.palette.text.primary,
   borderRadius: theme.spacing(2),
-  wordWrap: 'break-word',
   overflowWrap: 'anywhere',
   wordBreak: 'break-word',
-  whiteSpace: 'pre-wrap',
+  whiteSpace: 'normal',
   position: 'relative',
 }));
 

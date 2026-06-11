@@ -27,15 +27,11 @@ import { ChatInput } from './ChatInput';
 const ChatContainer = styled(Box)(({ theme }) => ({
   display: 'flex',
   width: '100%',
-  height: '100%',
-  // Safety cap: even if Mirador's companion-window content area is a
-  // scroll-its-content container (no fixed height), this prevents the chat
-  // box from growing taller than the viewport as the LLM streams text in.
-  maxHeight: '100vh',
+  height: '100%',   // fills the sticky wrapper which has a definite pixel height
   minHeight: 0,
+  overflow: 'hidden',
   backgroundColor: theme.palette.background.paper,
   borderRadius: theme.shape.borderRadius,
-  overflow: 'hidden',
   boxShadow: theme.shadows[3],
   gap: 0,
   flex: 1,
@@ -62,12 +58,14 @@ const ChatHeader = styled(Box)(({ theme }) => ({
 
 const MessageArea = styled(Box)(({ theme }) => ({
   flex: '1 1 0',
-  minHeight: 0, // Critical: prevents the area from growing with content; enables scroll
+  minHeight: 0,      // allows the area to shrink so it scrolls instead of growing
   overflowY: 'auto',
-  overflowX: 'hidden', // Prevent horizontal scroll
+  overflowX: 'hidden',
   padding: theme.spacing(2),
   backgroundColor: theme.palette.background.default,
-  wordWrap: 'break-word', // Wrap long text
+  // Ensure any stray long text wraps inside the scroll area
+  overflowWrap: 'anywhere',
+  wordBreak: 'break-word',
 }));
 
 const HeaderActions = styled(Box)(({ theme }) => ({
@@ -349,13 +347,13 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
                 Examples:
               </Typography>
               <Typography variant="caption" color="textSecondary">
-                • What is this document about?
+                • Describe the objects in this image?
               </Typography>
               <Typography variant="caption" color="textSecondary">
-                • Summarize the main themes
+                • Transcribe this image
               </Typography>
               <Typography variant="caption" color="textSecondary">
-                • Who is mentioned in this page?
+                • What colours do you see?
               </Typography>
             </Box>
           )}

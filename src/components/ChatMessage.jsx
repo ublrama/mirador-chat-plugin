@@ -20,6 +20,8 @@ const MessageBubble = styled(Paper)(({ theme, role }) => ({
   padding: theme.spacing(1.5, 2),
   maxWidth: '75%',
   minWidth: 0,
+  // overflow:hidden prevents text from bleeding outside the bubble boundary
+  overflow: 'hidden',
   backgroundColor: role === 'user'
     ? theme.palette.primary.main
     : theme.palette.background.default,
@@ -27,11 +29,12 @@ const MessageBubble = styled(Paper)(({ theme, role }) => ({
     ? theme.palette.primary.contrastText
     : theme.palette.text.primary,
   borderRadius: theme.spacing(2),
-  // Wrap long content (including unbroken strings like URLs or hashes)
-  wordWrap: 'break-word',
+  // Force all text to wrap — overflowWrap:'anywhere' breaks even unspaced strings
   overflowWrap: 'anywhere',
   wordBreak: 'break-word',
-  whiteSpace: 'pre-wrap',
+  // normal (not pre-wrap) so the browser's own line-wrap algorithm runs first;
+  // overflowWrap/wordBreak kick in only when a word would overflow.
+  whiteSpace: 'normal',
 }));
 
 const IconContainer = styled(Box)(({ theme, role }) => ({

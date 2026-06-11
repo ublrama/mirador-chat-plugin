@@ -145,7 +145,7 @@ the weights in a Docker volume so subsequent restarts are instant.
 ```ini
 USE_OLLAMA=true
 COMPOSE_PROFILES=ollama
-OLLAMA_MODEL=gemma4:e2b   # any tag from https://ollama.com/library
+OLLAMA_MODEL=qwen3-vl:4b   # any tag from https://ollama.com/library
 ```
 
 **2. Build and start both services:**
