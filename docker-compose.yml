@@ -21,10 +21,7 @@ services:
 
       # ── Provider credentials (set only the ones you need) ─────────────────
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - AZURE_API_KEY=${AZURE_API_KEY:-}
-      - AZURE_API_BASE=${AZURE_API_BASE:-}
-      - AZURE_API_VERSION=${AZURE_API_VERSION:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
 
       # ── Ollama base URL ───────────────────────────────────────────────────
       # When USE_OLLAMA=true the backend defaults to http://ollama:11434.

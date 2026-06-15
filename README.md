@@ -1,250 +1,335 @@
 # mirador-chat-plugin
 
-A [Mirador 4](https://github.com/ProjectMirador/mirador) plugin that adds an AI chat assistant companion window to every viewer window. Users can ask questions about the loaded IIIF manifest and receive streaming answers with annotation-based evidence links.
+A [Mirador 4](https://github.com/ProjectMirador/mirador) plugin that adds an AI chat assistant companion window to every viewer window. Users can ask questions about the IIIF canvas they are currently viewing and receive streaming answers powered by any LLM provider via [LiteLLM](https://docs.litellm.ai/).
 
 ## Features
 
-- **Chat button** in the window top-bar that toggles a right-side companion window
-- **Streaming responses** via Server-Sent Events (SSE) from your own backend
-- **Evidence panel** linking AI answers back to canvas annotations
-- **Scope selector** – search across the entire manifest or restrict to the current canvas
-- **Image & metadata context** toggles that enrich the prompt sent to the LLM
-- **WebLLM in-browser mode** – run inference entirely in the browser via WebGPU (no backend required)
-- **Mock API fallback** – the plugin works out of the box without a backend
+- **Chat button** in the window top-bar that opens a right-side companion window
+- **Streaming responses** via Server-Sent Events (SSE) — tokens appear as they are generated, for all manifest types
+- **Conversation memory** — the canvas image is sent once on the first question and retained in conversation history so follow-up questions can reference the same image without re-uploading it
+- **Model selector** — dropdown in the chat header showing only the models whose API key is configured; users can switch model per session
+- **Vision-model support** — sends a 512 px thumbnail of the current canvas image (never full resolution) to reduce cost and latency
+- **Manifest metadata context** — optional toggle to include title, description, date, etc. as extra context
+- **Scoped AI responses** — the assistant only answers questions directly about the visible image or provided metadata; off-topic questions are politely refused
+- **Resizable panel** — drag the left edge to widen or narrow the chat window
 
-## Installation
+---
 
-```bash
-npm install mirador-chat-plugin
-```
+## Quick start (Docker — recommended)
 
-### Peer dependencies
+The repository ships a multi-stage `Dockerfile` that builds the Vite SPA and packages it together with the FastAPI backend into a single container.
 
-Make sure the following packages are already installed in the host app:
-
-| Package | Version |
-|---|---|
-| `mirador` | `^4.0.0` |
-| `react` | `^18 || ^19` |
-| `react-dom` | `^18 || ^19` |
-| `@mui/material` | `^7.0.0` |
-| `@mui/icons-material` | `^7.0.0` |
-| `@mui/system` | `^7.0.0` |
-| `@emotion/react` | `^11` |
-| `@emotion/styled` | `^11` |
-| `prop-types` | `^15` |
-
-## Usage
-
-```js
-import Mirador from 'mirador';
-import miradorChatPlugin from 'mirador-chat-plugin';
-
-Mirador.viewer(
-  { id: 'viewer', windows: [{ loadedManifest: '...' }] },
-  [...miradorChatPlugin]
-);
-```
-
-### Backend configuration
-
-Set `VITE_API_ENDPOINT` (or the equivalent runtime env var) to the root URL of your chat backend.
-
-```
-VITE_API_ENDPOINT=https://your-backend.example.com/api/chat
-```
-
-The plugin expects the backend to:
-
-- **Internal manifests** – `POST <endpoint>/<item-id>/stream` returning an SSE stream with events of type `start`, `text_chunk`, `evidence`, and `done`.
-- **External manifests** – `POST <endpoint>/external` returning a plain JSON response `{ answer, evidence[] }`.
-
-When the backend is unreachable the plugin automatically falls back to the built-in mock streaming API.
-
-### WebLLM in-browser mode
-
-The plugin optionally supports fully in-browser AI inference powered by [WebLLM](https://github.com/mlc-ai/web-llm) and WebGPU. In this mode no backend server is required: the model runs locally on the user's GPU.
-
-Enable it by setting two environment variables before building or starting the dev server:
-
-```
-VITE_WEBLLM_ENABLED=true
-VITE_WEBLLM_MODEL=Llama-3.2-1B-Instruct-q4f16_1-MLC
-```
-
-When enabled the chat header shows a **Load model** button. Clicking it downloads the model weights (cached in the browser after the first load) and starts the engine. Subsequent questions are answered locally without any network call.
-
-You can also use a vision-capable model to send the current canvas image alongside the question:
-
-```
-VITE_WEBLLM_MODEL=Llama-3.2-11B-Vision-Instruct-q4f16_1-MLC
-```
-
-Then enable the **Use image as context** toggle in the chat header.
-
-#### Browser requirements
-
-| Requirement | Notes |
-|---|---|
-| **WebGPU** | Chrome 113+, Edge 113+, Chrome/Edge on Android 125+. Firefox and Safari have limited/no support. |
-| **GPU VRAM** | ~500 MB for 1 B models; ~4–7 GB for 7–11 B vision models. Integrated GPUs may struggle with larger models. |
-
-If WebGPU is not available the banner shows a "WebGPU not available – using backend" message and the plugin falls back to the normal backend/mock path automatically.
-
-#### Limitations of in-browser mode
-
-- **No evidence panel** – the local model cannot perform retrieval-augmented generation (RAG), so the evidence sidebar will be empty. Evidence links are only available when using the backend path.
-- **First-load download** – model weights are large (0.5 GB to 7+ GB). The weights are cached via the browser's Cache Storage, so subsequent loads are instant.
-- **CORS on IIIF images** – when using a vision model with **Use image as context**, the IIIF image server must send permissive `Access-Control-Allow-Origin` headers so the browser can fetch the image.
-
-## Docker — all-in-one container
-
-The repository ships a multi-stage `Dockerfile` that packages the Mirador SPA
-**and** a FastAPI backend into a single container image. The backend uses
-[LiteLLM](https://docs.litellm.ai/) so you can point it at any LLM provider
-without changing code.
-
-### Quick start
+### 1. Configure environment
 
 ```bash
-# 1. Copy the environment template and fill in your API key
 cp .env.example .env
-# edit .env: set OPENAI_API_KEY (and optionally LLM_MODEL)
+```
 
-# 2. Build and run
+Open `.env` and set at minimum:
+
+```ini
+OPENAI_API_KEY=sk-...           # or any other provider key
+LLM_MODEL=gpt-4o-mini           # any LiteLLM model string
+```
+
+### 2. Build and start
+
+```bash
 docker compose up --build
 ```
 
-Open <http://localhost:8000> — Mirador loads with the chat plugin connected to
-the backend.
+Open <http://localhost:8000>. The Mirador viewer loads with the chat plugin connected to the backend.
 
-### Choosing a model
+> **Note:** The `docker-compose.yml` passes all environment variables from `.env` directly into the container, so no rebuild is needed when you change API keys or the model.
 
-Set `LLM_MODEL` in `.env` to any
-[LiteLLM model string](https://docs.litellm.ai/docs/providers):
+---
 
-| Provider | Example value |
-|---|---|
-| OpenAI (default) | `gpt-4o-mini` |
-| OpenAI GPT-4o | `gpt-4o` |
-| Anthropic Claude | `anthropic/claude-3-haiku-20240307` |
-| Ollama (local) | `ollama/llama3` |
-| Azure OpenAI | `azure/<your-deployment>` |
+## LLM providers
 
-For Ollama, make sure `OLLAMA_API_BASE` points to your running instance
-(default: `http://host.docker.internal:11434`).
+Set `LLM_MODEL` in `.env` to any [LiteLLM model string](https://docs.litellm.ai/docs/providers). The model selector in the chat UI automatically shows the providers whose key is present in `.env`.
 
-### Running Ollama in a container
+| Provider                      | `LLM_MODEL` example                 | Credential variable |
+|-------------------------------|-------------------------------------|---|
+| OpenAI GPT -5.4 mini(default) | `gpt-5.4-mini`                      | `OPENAI_API_KEY` |
+| Google Gemini                 | `gemini/gemini-3.5-flash`           | `GEMINI_API_KEY` |
+| Ollama (external)             | `ollama/llama3`                     | `OLLAMA_API_BASE=http://host.docker.internal:11434` |
 
-You can run Ollama as a sidecar container — no local Ollama installation
-required. The container pulls the chosen model on first start and caches
-the weights in a Docker volume so subsequent restarts are instant.
+---
 
-**1. Enable the feature in `.env`:**
+## Running Ollama in a sidecar container
+
+No local Ollama installation is required. Docker Compose can spin up Ollama alongside the app.
+
+**1. Add to `.env`:**
 
 ```ini
 USE_OLLAMA=true
 COMPOSE_PROFILES=ollama
-OLLAMA_MODEL=qwen3-vl:4b   # any tag from https://ollama.com/library
+OLLAMA_MODEL=qwen3-vl:4b   # any model from https://ollama.com/library
 ```
 
-**2. Build and start both services:**
+> When `USE_OLLAMA=false` (the default), leave `COMPOSE_PROFILES` commented out — the Ollama container will not be started.
 
+**2. Start both services:**
 ```bash
 docker compose up --build
 ```
 
-`COMPOSE_PROFILES=ollama` (set in `.env`) activates the Ollama service
-automatically, so no extra flags are needed on the command line.
+The Ollama container pulls the chosen model on first start and caches the weights in the `ollama_data` volume — subsequent restarts skip the download.
 
-> **Note:** The first start downloads the model weights (can be several GB).
-> Watch the `ollama` container logs to track progress:
-> ```bash
-> docker compose logs -f ollama
-> ```
-> The app is available immediately at <http://localhost:8000>, but chat
-> requests will fail until the model pull completes.
+```bash
+# Watch the pull progress
+docker compose logs -f ollama
+```
 
-To switch to a different model, change `OLLAMA_MODEL` in `.env` and restart:
+> Chat requests will fail until the model pull completes. The app itself is reachable at <http://localhost:8000> immediately.
+
+To switch models, update `OLLAMA_MODEL` in `.env` and restart:
 
 ```bash
 docker compose down && docker compose up --build
 ```
 
-Previously pulled models remain cached in the `ollama_data` volume.
-To free the disk space, remove the volume:
+To free the cached model weights:
 
 ```bash
 docker compose down -v
 ```
 
-### Backend API
+---
 
-The FastAPI backend exposes two endpoints that the plugin calls automatically:
+## Running without Docker
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/chat/{item_id}/stream` | SSE stream for internal manifests |
-| `POST` | `/api/chat/external` | Plain JSON for external manifests |
+### Prerequisites
 
-Interactive docs are available at <http://localhost:8000/docs>.
+- Node.js ≥ 20
+- Python ≥ 3.12
+- `pip`
 
-### Building without Docker
+### 1. Install frontend dependencies
 
 ```bash
-# Build the demo SPA
-npm run build:demo   # outputs to dist-demo/
+npm install
+```
 
-# Install Python dependencies
+### 2. Install backend dependencies
+
+```bash
 pip install -r backend/requirements.txt
+```
 
-# Run the backend (serves the SPA + API)
+### 3. Configure environment
+
+Create a `.env` file in the project root (the backend reads it automatically via `python-dotenv`):
+
+```bash
+cp .env.example .env
+# edit .env — set at least one provider key and LLM_MODEL
+```
+
+### 4. Build the demo SPA
+
+```bash
+npm run build:demo
+# outputs to dist-demo/
+```
+
+### 5. Start the backend (serves SPA + API on port 8000)
+
+```bash
 uvicorn backend.main:app --reload
 ```
 
-## Development
+Open <http://localhost:8000>.
+
+> `--reload` enables hot-reloading of Python source changes. Omit it in production.
+
+---
+
+## Development (Vite dev server)
+
+The Vite dev server gives you Hot Module Replacement for the frontend without needing to build the SPA first.
 
 ```bash
-# Install dependencies
-npm install
-
-# Start the demo dev server (opens http://localhost:4444)
 npm start
-
-# Build the library
-npm run build
+# Opens http://localhost:4444
 ```
 
-The demo app lives in `demo/src/`. Copy `demo/src/.env.example` to `demo/src/.env` and set `VITE_API_ENDPOINT` before starting the server if you have a real backend to test against.
+To point the dev server at your local backend, create `demo/src/.env`:
 
-## Plugin structure
+```ini
+VITE_API_ENDPOINT=http://localhost:8000/api/chat
+```
+
+A running backend is required — chat requests will fail without one.
+
+### Running the backend alongside the dev server
+
+Open a second terminal:
+
+```bash
+uvicorn backend.main:app --reload
+# Backend on http://localhost:8000
+# Frontend dev server on http://localhost:4444
+```
+
+### Available npm scripts
+
+| Command | Description |
+|---|---|
+| `npm start` | Start the Vite dev server on port 4444 |
+| `npm run build` | Build the plugin as an ES module library → `dist/` |
+| `npm run build:demo` | Build the demo SPA → `dist-demo/` (used by Docker) |
+| `npm run clean` | Remove `dist/` and `dist-demo/` |
+
+---
+
+## Backend API
+
+Both endpoints return the same SSE stream format so the frontend can handle them identically.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/chat/{item_id}/stream` | SSE stream — internal manifests |
+| `POST` | `/api/chat/external` | SSE stream — external manifests |
+| `GET`  | `/api/models` | Returns available models based on configured API keys |
+
+Interactive API docs (Swagger UI): <http://localhost:8000/docs>
+
+### Which endpoint is called?
+
+The plugin inspects the loaded manifest URL:
+
+- **Known/internal manifests** (Leiden domains) → `POST /api/chat/{item_id}/stream`
+- **All other manifests** → `POST /api/chat/external`
+
+Both endpoints now return a streaming SSE response — there is no longer a plain JSON path.
+
+### Request body
+
+Both endpoints accept the same fields (internal adds `session_id`):
+
+```json
+{
+  "question": "What language is this text written in?",
+  "scope": "canvas",
+  "canvas_id": "https://…/canvas/1",
+  "session_id": "abc123",
+  "use_image_context": true,
+  "use_metadata_context": false,
+  "conversation_history": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text",      "text": "What do you see?" },
+        { "type": "image_url", "image_url": { "url": "https://…/full/512,/0/default.jpg" } }
+      ]
+    },
+    { "role": "assistant", "content": "I see a stone arch…" }
+  ],
+  "manifest_url": "https://…/manifest",
+  "image_url": "https://…/full/full/0/default.jpg",
+  "model": "gemini/gemini-2.5-flash"
+}
+```
+
+> **Image normalisation:** the backend automatically replaces the IIIF size segment of `image_url` with `512,` before sending it to the LLM — the full-resolution URL is never forwarded.
+
+> **Conversation memory:** the frontend embeds the canvas image into the first user turn of `conversation_history` so the model can answer follow-up questions about the same image without re-uploading it.
+
+### SSE event schema
 
 ```
-src/
-├── index.js                       # Plugin entry-point; exports miradorChatPlugin[]
-├── state/
-│   └── action-types.js            # Mirador Redux action type constants
-├── ChatCompanionWindowContainer.jsx
-├── QuestionPanel.jsx
-├── api.js                         # Mock question API (non-streaming)
-├── api/
-│   └── mockStreamingAPI.js        # Mock SSE streaming API
-├── components/
-│   ├── ChatComponent.jsx          # Main chat UI
-│   ├── ChatCompanionWindow.jsx
-│   ├── ChatIcon.jsx
-│   ├── ChatInput.jsx
-│   ├── ChatMessage.jsx
-│   ├── ChatTopBarButton.jsx       # Top-bar toggle button
-│   ├── EvidenceItem.jsx
-│   ├── EvidencePanel.jsx
-│   ├── ScopeSelector.jsx
-│   └── StreamingMessage.jsx
-└── hooks/
-    ├── useCanvasNavigation.js     # Canvas navigation & highlight logic
-    ├── useConversation.js         # Conversation state & SSE streaming
-    └── useWebLLMEngine.js         # WebLLM in-browser engine lifecycle
+data: {"type": "start"}
+data: {"type": "text_chunk", "content": "Here is what I see…"}
+data: {"type": "text_chunk", "content": " a stone arch…"}
+data: {"type": "done"}
+data: {"type": "error", "message": "…"}   ← sent instead of done on failure
 ```
+
+### `GET /api/models` response
+
+```json
+{
+  "models": [
+    { "id": "gpt-4o-mini",              "name": "GPT-4o Mini",        "provider": "OpenAI" },
+    { "id": "gemini/gemini-2.5-flash",  "name": "Gemini 2.5 Flash",   "provider": "Google" }
+  ],
+  "default": "gemini/gemini-2.5-flash"
+}
+```
+
+Only providers with an API key set in `.env` appear in the list.
+
+### AI response scope
+
+The assistant is instructed to **only answer questions about the image or metadata** currently on screen. Off-topic questions (e.g. general knowledge unrelated to the document) receive the response:
+
+> *"I can only answer questions about the image or document currently on screen."*
+
+---
+
+## Opening a specific manifest via URL
+
+Append a `manifest` query parameter to load a manifest directly:
+
+```
+http://localhost:8000/?manifest=https://catalogue.leidenuniv.nl/…/manifest
+```
+
+Optional parameters:
+
+| Parameter | Description |
+|---|---|
+| `manifest` / `manifestId` | IIIF manifest URL to load |
+| `canvasId` / `canvasID` | Jump to a specific canvas by ID |
+| `collection` | Load a IIIF collection (clears `manifest` and `canvasId`) |
+
+---
+
+## Project structure
+
+```
+mirador-chat-plugin/
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example              ← copy to .env and fill in credentials
+├── package.json
+├── vite.config.js            ← library build (dist/)
+├── vite.config.demo.js       ← demo SPA build (dist-demo/)
+├── backend/
+│   ├── main.py               ← FastAPI app; serves SPA + API
+│   ├── requirements.txt
+│   ├── routers/
+│   │   └── chat.py           ← /api/models  &  both chat endpoints
+│   └── services/
+│       ├── llm.py            ← LiteLLM streaming helpers + IIIF URL normalisation
+│       ├── manifest.py       ← IIIF manifest fetcher / text extractor
+│       └── prompt_templates.py  ← system prompts (image / metadata-only / no-context)
+├── demo/
+│   └── src/
+│       ├── index.html
+│       └── index.js          ← demo viewer config; reads ?manifest= from URL
+└── src/
+    ├── index.js              ← plugin entry-point; exports miradorChatPlugin[]
+    ├── ChatCompanionWindowContainer.jsx
+    ├── state/
+    │   └── action-types.js
+    ├── components/
+    │   ├── ChatComponent.jsx    ← model selector dropdown, metadata toggle
+    │   ├── ChatInput.jsx
+    │   ├── ChatMessage.jsx
+    │   ├── ChatTopBarButton.jsx
+    │   ├── EvidenceItem.jsx
+    │   ├── EvidencePanel.jsx
+    │   ├── ScopeSelector.jsx
+    │   └── StreamingMessage.jsx
+    └── hooks/
+        ├── useCanvasNavigation.js
+        └── useConversation.js   ← SSE streaming, conversation memory, image history
+```
+
+---
 
 ## License
 

@@ -13,19 +13,37 @@ For other providers, consult the LiteLLM docs:
 https://docs.litellm.ai/docs/providers
 """
 
+import logging
 import os
+import re
 from typing import AsyncIterator
 
 import litellm
+
+logger = logging.getLogger(__name__)
 
 from backend.services.prompt_templates import build_messages
 
 # Silence LiteLLM's verbose logging unless the caller opts in.
 litellm.set_verbose = os.getenv("LITELLM_VERBOSE", "false").lower() == "true"
 
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = "gpt-5.4-mini"
 DEFAULT_OLLAMA_MODEL = "qwen3-vl:4b"
 DEFAULT_OLLAMA_API_BASE = "http://ollama:11434"
+
+# ── IIIF image normalisation ──────────────────────────────────────────────────
+_IIIF_IMAGE_PARAMS = "/full/512,/0/default.jpg"
+_IIIF_TAIL_RE = re.compile(r"(/[^/]+){3}/[^/.]+\.[a-z]+$", re.IGNORECASE)
+
+
+def _normalise_image_url(url: str | None) -> str | None:
+    """Replace IIIF image request parameters with a 512-px thumbnail spec."""
+    if not url:
+        return url
+    normalised = _IIIF_TAIL_RE.sub(_IIIF_IMAGE_PARAMS, url)
+    if normalised == url and not url.rstrip("/").endswith(_IIIF_IMAGE_PARAMS):
+        normalised = url.rstrip("/") + _IIIF_IMAGE_PARAMS
+    return normalised
 
 
 def _model() -> str:
@@ -51,12 +69,10 @@ def _build_messages(
     conversation_history: list[dict] | None = None,
     image_url: str | None = None,
 ) -> list[dict]:
-    """Build the OpenAI-compatible messages list using prompt_templates."""
+    """Build the OpenAI-compatible messages list. ``image_url`` must already be normalised."""
     return build_messages(
         question,
         image_url=image_url,
-        # ``context`` is manifest metadata when use_metadata_context is true;
-        # pass it as ``metadata`` so the template picks the right system prompt.
         metadata=context or None,
         conversation_history=conversation_history,
     )
@@ -67,15 +83,23 @@ async def stream_answer(
     context: str = "",
     conversation_history: list[dict] | None = None,
     image_url: str | None = None,
+    model: str | None = None,
 ) -> AsyncIterator[str]:
     """
     Yield text delta strings from the LLM via LiteLLM streaming.
     Raises on non-retriable errors so the caller can send an SSE error event.
+    ``model`` overrides the server-configured default when supplied.
     """
-    messages = _build_messages(question, context, conversation_history, image_url)
+    resolved_model = model or _model()
+    normalised_image = _normalise_image_url(image_url)
+    logger.info(
+        "stream_answer | model=%s | image original=%s | image sent=%s",
+        resolved_model, image_url, normalised_image,
+    )
+    messages = _build_messages(question, context, conversation_history, normalised_image)
 
     response = await litellm.acompletion(
-        model=_model(),
+        model=resolved_model,
         messages=messages,
         stream=True,
     )
@@ -91,15 +115,23 @@ async def complete_answer(
     context: str = "",
     conversation_history: list[dict] | None = None,
     image_url: str | None = None,
+    model: str | None = None,
 ) -> str:
     """
     Return a single (non-streaming) answer string.
     Used for the /external endpoint which returns plain JSON.
+    ``model`` overrides the server-configured default when supplied.
     """
-    messages = _build_messages(question, context, conversation_history, image_url)
+    resolved_model = model or _model()
+    normalised_image = _normalise_image_url(image_url)
+    logger.info(
+        "complete_answer | model=%s | image original=%s | image sent=%s",
+        resolved_model, image_url, normalised_image,
+    )
+    messages = _build_messages(question, context, conversation_history, normalised_image)
 
     response = await litellm.acompletion(
-        model=_model(),
+        model=resolved_model,
         messages=messages,
         stream=False,
     )

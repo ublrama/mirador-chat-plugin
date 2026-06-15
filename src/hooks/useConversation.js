@@ -9,9 +9,7 @@ import { mockStreamingAPI } from '../api/mockStreamingAPI';
  * @param {string} options.canvasId - Current canvas ID (if scope is 'canvas')
  * @param {boolean} options.useImageContext - Whether to include the current canvas image
  * @param {boolean} options.useMetadataContext - Whether to include manifest metadata
- * @param {object|null} options.engine - Optional WebLLM engine for in-browser inference
  * @param {string|null} options.canvasImageUrl - Resolved image URL for the current canvas
- * @param {string} options.modelId - WebLLM model identifier (used when engine is set)
  * @returns {Object} Conversation state and methods
  */
 export function useConversation(manifestId, options = {}) {
@@ -20,9 +18,8 @@ export function useConversation(manifestId, options = {}) {
     canvasId = null,
     useImageContext = false,
     useMetadataContext = false,
-    engine = null,
     canvasImageUrl = null,
-    modelId = '',
+    model = null,
   } = options;
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -189,23 +186,14 @@ export function useConversation(manifestId, options = {}) {
       timestamp: new Date().toISOString(),
     });
 
-    // ── Image-URL strategy ────────────────────────────────────────────────────
-    // First message of a session: send image_url at the request level.
-    //   The LLM receives the question + image together.
-    // Follow-up messages: inject the session image into the first history entry
-    //   as a multimodal content array so the LLM still has the image in context,
-    //   but we don't pay the cost of re-transmitting it every time.
     const isFirstMessage = messages.length === 0;
 
     if (isFirstMessage && useImageContext) {
-      // Capture the image URL for this session; future sends use it from the ref
       sessionImageUrlRef.current = canvasImageUrlRef.current;
     }
 
     const requestImageUrl = isFirstMessage ? sessionImageUrlRef.current : null;
 
-    // Build conversation history, injecting the session image into the first
-    // user turn so the LLM context window retains it on follow-ups.
     const buildHistory = (msgs) => {
       if (!sessionImageUrlRef.current || msgs.length === 0) {
         return msgs.map(m => ({ role: m.role, content: m.content }));
@@ -225,29 +213,10 @@ export function useConversation(manifestId, options = {}) {
     };
 
     try {
-      // ── WebLLM in-browser path ─────────────────────────────────────────────
-      if (engine) {
-        await handleWebLLMQuestion({
-          engine,
-          modelId,
-          question,
-          messages,
-          useImageContext: isFirstMessage && useImageContext,
-          canvasImageUrl: requestImageUrl,
-          sessionImageUrl: !isFirstMessage ? sessionImageUrlRef.current : null,
-          streamingMessageRef: { current: streamingMessage },
-          setStreamingMessage,
-          addMessage,
-          abortControllerRef,
-        });
-        return;
-      }
-
-      // ── Remote backend / mock path ───────────────────────────────────────
+      // ── Remote backend / mock path ─────────────────────────────────────────
       const baseEndpoint = import.meta.env.VITE_API_ENDPOINT || '/api/chat';
       const external = isExternalManifest(manifestId);
 
-      // Create abort controller for cancellation
       abortControllerRef.current = new AbortController();
 
       let response;
@@ -255,11 +224,13 @@ export function useConversation(manifestId, options = {}) {
 
       try {
         if (external) {
-          // External manifest: single JSON endpoint, no item-ID path
           const apiEndpoint = `${baseEndpoint}/external`;
           response = await fetch(apiEndpoint, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'text/event-stream',
+            },
             body: JSON.stringify({
               manifest_url: manifestId,
               question,
@@ -268,11 +239,12 @@ export function useConversation(manifestId, options = {}) {
               use_image_context: isFirstMessage && useImageContext,
               use_metadata_context: useMetadataContext,
               image_url: requestImageUrl,
+              conversation_history: buildHistory(messages),
+              model: model || undefined,
             }),
             signal: abortControllerRef.current.signal,
           });
         } else {
-          // Internal manifest: streaming SSE endpoint
           const itemId = extractItemId(manifestId);
           const apiEndpoint = `${baseEndpoint}/${itemId}/stream`;
           response = await fetch(apiEndpoint, {
@@ -289,8 +261,8 @@ export function useConversation(manifestId, options = {}) {
               use_image_context: isFirstMessage && useImageContext,
               use_metadata_context: useMetadataContext,
               image_url: requestImageUrl,
-              // History has the session image injected into the first user turn
               conversation_history: buildHistory(messages),
+              model: model || undefined,
             }),
             signal: abortControllerRef.current.signal,
           });
@@ -305,27 +277,11 @@ export function useConversation(manifestId, options = {}) {
         response = await mockStreamingAPI(question);
       }
 
-      // --- External manifest: handle plain JSON response ---
-      if (external && !useMockAPI) {
-        const data = await response.json();
-        const finalMessage = {
-          id: `msg-${Date.now()}`,
-          role: 'assistant',
-          content: data.answer || 'No answer received',
-          evidence: data.evidence || [],
-          timestamp: new Date().toISOString(),
-        };
-        addMessage(finalMessage);
-        setStreamingMessage(null);
-        return;
-      }
-
-      // --- Internal manifest (or mock): handle SSE streaming response ---
+      // --- Both internal and external manifests now return SSE streams ---
       if (!response.body) {
         throw new Error('Streaming not supported');
       }
 
-      // Read the stream
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -353,9 +309,9 @@ export function useConversation(manifestId, options = {}) {
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        buffer = lines.pop() || '';
 
-          for (const line of lines) {
+        for (const line of lines) {
           if (!line.trim() || line.startsWith(':')) continue;
 
           if (line.startsWith('data: ')) {
@@ -372,7 +328,6 @@ export function useConversation(manifestId, options = {}) {
             try {
               switch (event.type) {
                 case 'start':
-                  // Initialize streaming
                   break;
 
                 case 'text_chunk':
@@ -389,7 +344,6 @@ export function useConversation(manifestId, options = {}) {
                   break;
 
                 case 'evidence': {
-                  // Handle both 'evidence' and 'items' property names
                   const evidenceData = event.evidence || event.items || [];
                   if (evidenceData && evidenceData.length > 0) {
                     currentEvidence = evidenceData;
@@ -402,7 +356,6 @@ export function useConversation(manifestId, options = {}) {
                 }
 
                 case 'done': {
-                  // Finalize the message when backend sends 'done' event
                   const finalMessage = {
                     id: streamingMessage?.id || `msg-${Date.now()}`,
                     role: 'assistant',
@@ -416,14 +369,12 @@ export function useConversation(manifestId, options = {}) {
                 }
 
                 case 'error':
-                  // Backend explicitly signalled an error — propagate it
                   throw new Error(event.message || event.error || 'The server returned an error');
 
                 default:
                   console.warn('Unknown SSE event type:', event.type, event);
               }
             } catch (eventError) {
-              // Re-throw so the outer catch sets error state for the user
               throw eventError;
             }
           }
@@ -440,7 +391,7 @@ export function useConversation(manifestId, options = {}) {
     } finally {
       setIsLoading(false);
     }
-  }, [manifestId, scope, sessionId, messages, addMessage, streamingMessage, useImageContext, useMetadataContext, engine, modelId]);
+  }, [manifestId, scope, sessionId, messages, addMessage, streamingMessage, useImageContext, useMetadataContext, model]);
 
   // Cancel streaming request
   const cancelRequest = useCallback(() => {
@@ -482,97 +433,6 @@ export function useConversation(manifestId, options = {}) {
 }
 
 /**
- * Handles a question using an in-browser WebLLM engine.
- * Streams token deltas into the same state shape the SSE path uses.
- */
-async function handleWebLLMQuestion({
-  engine,
-  modelId,
-  question,
-  messages,
-  useImageContext,
-  canvasImageUrl,
-  sessionImageUrl,   // image URL for injecting into history on follow-ups
-  streamingMessageRef,
-  setStreamingMessage,
-  addMessage,
-  abortControllerRef,
-}) {
-  // Build the user message content.
-  // First message: include the image directly with the question.
-  // Follow-ups: image is injected into the first history turn below.
-  let userContent;
-  if (useImageContext && canvasImageUrl) {
-    userContent = [
-      { type: 'text', text: question },
-      { type: 'image_url', image_url: { url: canvasImageUrl } },
-    ];
-  } else {
-    userContent = question;
-  }
-
-  // Translate conversation history; inject session image into first user turn
-  const historyMessages = messages.map((m, i) => {
-    if (i === 0 && m.role === 'user' && sessionImageUrl) {
-      return {
-        role: 'user',
-        content: [
-          { type: 'text', text: m.content },
-          { type: 'image_url', image_url: { url: sessionImageUrl } },
-        ],
-      };
-    }
-    return { role: m.role, content: m.content };
-  });
-
-  const chatMessages = [
-    ...historyMessages,
-    { role: 'user', content: userContent },
-  ];
-
-  // Create a fresh abort controller for cancellation support
-  abortControllerRef.current = new AbortController();
-
-  let currentContent = '';
-
-  const stream = await engine.chat.completions.create({
-    model: modelId,
-    messages: chatMessages,
-    stream: true,
-  });
-
-  for await (const chunk of stream) {
-    // Respect cancellation
-    if (abortControllerRef.current?.signal?.aborted) break;
-
-    const delta = chunk.choices?.[0]?.delta?.content || '';
-    if (delta) {
-      currentContent += delta;
-      setStreamingMessage(prev => ({
-        ...prev,
-        content: currentContent,
-      }));
-    }
-
-    // finish_reason === 'stop' signals completion
-    if (chunk.choices?.[0]?.finish_reason === 'stop') {
-      break;
-    }
-  }
-
-  // Finalise the message (no evidence from in-browser inference)
-  const finalMessage = {
-    id: streamingMessageRef.current?.id || `msg-${Date.now()}`,
-    role: 'assistant',
-    content: currentContent,
-    evidence: [],
-    timestamp: new Date().toISOString(),
-  };
-  addMessage(finalMessage);
-  setStreamingMessage(null);
-}
-
-/**
  * Extract item ID from manifest URL
  */
 function extractItemId(manifestId) {
@@ -597,4 +457,3 @@ function isExternalManifest(manifestId) {
   if (!manifestId) return false;
   return !KNOWN_DOMAINS.some(domain => manifestId.includes(domain));
 }
-

@@ -140,7 +140,7 @@ export function QuestionPanel({ manifestId, windowId }) {
             rows={3}
             variant="outlined"
             label="Your Question"
-            placeholder="e.g., What is this document about?"
+            placeholder="e.g., Describe this image to me?"
             value={question}
             onChange={handleQuestionChange}
             onKeyPress={handleKeyPress}
