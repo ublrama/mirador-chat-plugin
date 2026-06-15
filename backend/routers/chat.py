@@ -1,6 +1,7 @@
 """
 Chat router — exposes the two endpoint shapes the frontend plugin expects:
 
+  GET  /api/models                  → list of available models (API keys present)
   POST /api/chat/{item_id}/stream   → SSE stream (internal manifests)
   POST /api/chat/external           → plain JSON  (external manifests)
 """
@@ -8,6 +9,7 @@ Chat router — exposes the two endpoint shapes the frontend plugin expects:
 import asyncio
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter
@@ -18,7 +20,48 @@ from backend.services import llm, manifest
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/chat")
+router = APIRouter(prefix="/api")
+
+
+# ── Available models registry ─────────────────────────────────────────────────
+# Each entry: (env_var_that_must_be_set, list_of_model_dicts)
+# Models are only surfaced to the UI when the corresponding key is present.
+
+_PROVIDER_MODELS = [
+    ("OPENAI_API_KEY", [
+        {"id": "gpt-5.4-mini",  "name": "GPT-5.4 Mini",  "provider": "OpenAI"},
+    ]),
+    ("GEMINI_API_KEY", [
+        {"id": "gemini/gemini-3.5-flash", "name": "Gemini 3.5 Flash", "provider": "Google"},
+    ])
+]
+
+
+@router.get("/models")
+async def list_models() -> dict:
+    """
+    Return the models available based on which API keys are configured.
+    Also includes the Ollama model when USE_OLLAMA=true.
+    The ``default`` field reflects the currently active LLM_MODEL setting.
+    """
+    available: list[dict] = []
+
+    for env_var, models in _PROVIDER_MODELS:
+        if os.getenv(env_var):
+            available.extend(models)
+
+    # Ollama (containerised or external)
+    if os.getenv("USE_OLLAMA", "false").lower() == "true" or os.getenv("OLLAMA_API_BASE"):
+        ollama_model = os.getenv("OLLAMA_MODEL", llm.DEFAULT_OLLAMA_MODEL)
+        available.append({
+            "id": f"ollama/{ollama_model}",
+            "name": f"Ollama – {ollama_model}",
+            "provider": "Ollama",
+        })
+
+    default_model = llm._model()
+
+    return {"models": available, "default": default_model}
 
 
 # ── Request models ────────────────────────────────────────────────────────────
@@ -33,7 +76,8 @@ class StreamRequest(BaseModel):
     use_metadata_context: bool = False
     conversation_history: list[dict] = []
     manifest_url: str | None = None  # set by the demo when it injects the URL
-    image_url: str | None = None  # current canvas image URL (for vision models)
+    image_url: str | None = None     # current canvas image URL (for vision models)
+    model: str | None = None         # override the server default model
 
 
 class ExternalRequest(BaseModel):
@@ -43,7 +87,9 @@ class ExternalRequest(BaseModel):
     canvas_id: str | None = None
     use_image_context: bool = False
     use_metadata_context: bool = False
-    image_url: str | None = None  # current canvas image URL (for vision models)
+    image_url: str | None = None      # current canvas image URL (for vision models)
+    model: str | None = None          # override the server default model
+    conversation_history: list[dict] = []
 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────────
@@ -58,6 +104,7 @@ async def _stream_sse(
     context: str,
     conversation_history: list[dict],
     image_url: str | None,
+    model: str | None = None,
 ) -> AsyncIterator[str]:
     """Async generator that yields SSE-formatted strings."""
     yield _sse({"type": "start"})
@@ -69,6 +116,7 @@ async def _stream_sse(
             context=context,
             conversation_history=conversation_history,
             image_url=image_url,
+            model=model,
         ):
             yield _sse({"type": "text_chunk", "content": delta})
 
@@ -82,7 +130,7 @@ async def _stream_sse(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
-@router.post("/{item_id}/stream")
+@router.post("/chat/{item_id}/stream")
 async def stream_endpoint(item_id: str, body: StreamRequest) -> StreamingResponse:
     """
     Streaming SSE endpoint for internal (Leiden) manifests.
@@ -103,6 +151,7 @@ async def stream_endpoint(item_id: str, body: StreamRequest) -> StreamingRespons
             context=context,
             conversation_history=body.conversation_history,
             image_url=body.image_url if body.use_image_context else None,
+            model=body.model,
         ),
         media_type="text/event-stream",
         headers={
@@ -112,11 +161,12 @@ async def stream_endpoint(item_id: str, body: StreamRequest) -> StreamingRespons
     )
 
 
-@router.post("/external")
-async def external_endpoint(body: ExternalRequest) -> dict:
+@router.post("/chat/external")
+async def external_endpoint(body: ExternalRequest) -> StreamingResponse:
     """
-    Non-streaming JSON endpoint for external IIIF manifests.
-    Returns ``{"answer": "...", "evidence": []}``.
+    Streaming SSE endpoint for external IIIF manifests.
+    Returns the same SSE event format as the internal /stream endpoint so the
+    frontend can handle both paths identically.
     """
     context = ""
     if body.use_metadata_context:
@@ -126,10 +176,18 @@ async def external_endpoint(body: ExternalRequest) -> dict:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not fetch manifest %s: %s", body.manifest_url, exc)
 
-    answer = await llm.complete_answer(
-        question=body.question,
-        context=context,
-        image_url=body.image_url if body.use_image_context else None,
+    return StreamingResponse(
+        _stream_sse(
+            question=body.question,
+            context=context,
+            conversation_history=body.conversation_history,
+            image_url=body.image_url if body.use_image_context else None,
+            model=body.model,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
-    return {"answer": answer, "evidence": []}

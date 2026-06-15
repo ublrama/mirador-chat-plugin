@@ -6,20 +6,20 @@ import {
   IconButton,
   Tooltip,
   Alert,
-  Button,
   Snackbar,
   FormControlLabel,
   Switch,
-  LinearProgress,
-  Chip,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  CircularProgress,
 } from '@mui/material';
 import DescriptionIcon from '@mui/icons-material/Description';
-import MemoryIcon from '@mui/icons-material/Memory';
 import { styled } from '@mui/material/styles';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { useConversation } from '../hooks/useConversation';
 import { useCanvasNavigation } from '../hooks/useCanvasNavigation';
-import { useWebLLMEngine } from '../hooks/useWebLLMEngine';
 import { ChatMessage } from './ChatMessage';
 import { StreamingMessage } from './StreamingMessage';
 import { ChatInput } from './ChatInput';
@@ -74,13 +74,6 @@ const HeaderActions = styled(Box)(({ theme }) => ({
   alignItems: 'center',
 }));
 
-const WebLLMBannerBox = styled(Box)(({ theme }) => ({
-  padding: theme.spacing(1, 2),
-  borderBottom: `1px solid ${theme.palette.divider}`,
-  backgroundColor: theme.palette.background.default,
-  flexShrink: 0,
-}));
-
 /**
  * Main chat component integrating all chat features
  */
@@ -88,8 +81,6 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
 
   // Debug: Log props on every render
   useEffect(() => {
-
-
     console.debug('[ChatComponent] props changed', {
       manifestId,
       windowId,
@@ -100,15 +91,7 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
     });
   }, [manifestId, windowId, state, actions]);
 
-
-
-
-  // Scope is fixed to the current canvas — questions are always about the
-  // page the user is looking at.
   const scope = 'canvas';
-  // Image context is always enabled — the AI uses the current canvas image
-  // automatically whenever one is available. The user only opts in/out of
-  // including manifest metadata.
   const useImageContext = true;
   const [useMetadataContext, setUseMetadataContext] = useState(false);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
@@ -116,15 +99,30 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
   const messageAreaRef = useRef(null);
   const chatInputRef = useRef(null);
 
-  // Custom hooks - useCanvasNavigation will read canvasIndex from state
+  // ── Model selector ────────────────────────────────────────────────────────
+  const [availableModels, setAvailableModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState(null);
+  const [modelsLoading, setModelsLoading] = useState(true);
+
+  useEffect(() => {
+    const baseEndpoint = import.meta.env.VITE_API_ENDPOINT || '/api/chat';
+    // Derive the /api/models URL from the configured endpoint base
+    const modelsUrl = baseEndpoint.replace(/\/chat$/, '/models');
+    fetch(modelsUrl)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => {
+        setAvailableModels(data.models || []);
+        setSelectedModel(data.default || (data.models?.[0]?.id ?? null));
+      })
+      .catch(() => {
+        // Backend not reachable — selector stays hidden
+        setAvailableModels([]);
+      })
+      .finally(() => setModelsLoading(false));
+  }, []);
+
   const canvasNav = useCanvasNavigation(state, windowId, actions);
 
-  // WebLLM in-browser engine (optional; only active when VITE_WEBLLM_ENABLED=true)
-  const webLLMEnabled = import.meta.env.VITE_WEBLLM_ENABLED === 'true';
-  const webLLM = useWebLLMEngine();
-  const resolvedEngine = webLLMEnabled ? (webLLM.engine || null) : null;
-
-  // Resolve the current canvas image URL for vision-model use
   const canvasImageUrl = useImageContext && canvasNav.currentCanvas
     ? canvasNav.getCanvasThumbnail(canvasNav.currentCanvas.id)
     : null;
@@ -134,9 +132,8 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
     canvasId: canvasNav.currentCanvas?.id,
     useImageContext,
     useMetadataContext,
-    engine: resolvedEngine,
     canvasImageUrl,
-    modelId: webLLM.modelId,
+    model: selectedModel,
   });
 
   useEffect(() => {
@@ -148,7 +145,6 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
     });
   }, [canvasNav.currentCanvas]);
 
-  // Add this debug check right after
   useEffect(() => {
     console.debug('[ChatComponent] useCanvasNavigation initialized', {
       hasActions: !!actions,
@@ -161,8 +157,6 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
     });
   }, [actions, canvasNav]);
 
-// javascript
-// In ChatComponent, add this after the useConversation hook call
   useEffect(() => {
     console.debug('[ChatComponent] conversation state changed', {
       messagesCount: conversation.messages.length,
@@ -172,7 +166,6 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
       timestamp: new Date().toISOString(),
     });
   }, [conversation.messages, conversation.sessionId, canvasNav.currentCanvas?.id]);
-
 
   const {
     messages,
@@ -185,14 +178,12 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
     cancelRequest,
   } = conversation;
 
-  // Return focus to input when AI finishes answering
   useEffect(() => {
     if (!isLoading && chatInputRef.current) {
       chatInputRef.current.focus();
     }
   }, [isLoading]);
 
-  // Auto-scroll to bottom on new messages
   useEffect(() => {
     if (messageAreaRef.current) {
       messageAreaRef.current.scrollTop = messageAreaRef.current.scrollHeight;
@@ -205,14 +196,12 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
 
   const handleNewChat = () => {
     if (messages.length > 0) {
-      // Save current conversation before clearing
       saveConversation();
       setSnackbarMessage('Previous conversation saved. Starting new chat...');
       setSnackbarOpen(true);
     }
     clearHistory();
   };
-
 
   return (
     <ChatContainer>
@@ -222,7 +211,6 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
             <Typography variant="h6">
               AI Chat Assistant
             </Typography>
-            
             <HeaderActions>
               <Tooltip title="New conversation">
                 <IconButton size="small" onClick={handleNewChat}>
@@ -231,7 +219,6 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
               </Tooltip>
             </HeaderActions>
           </Box>
-
 
           <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
             <Tooltip title="Include manifest metadata (title, description, date, etc.) as context for the AI">
@@ -257,66 +244,41 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
               />
             </Tooltip>
           </Box>
+
+          {/* Model selector — only shown when the backend reports ≥1 model */}
+          {!modelsLoading && availableModels.length > 0 && (
+            <Box sx={{ mt: 1 }}>
+              <FormControl size="small" fullWidth disabled={isLoading}>
+                <InputLabel id="model-select-label" sx={{ fontSize: '0.75rem' }}>Model</InputLabel>
+                <Select
+                  labelId="model-select-label"
+                  value={selectedModel || ''}
+                  label="Model"
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  sx={{ fontSize: '0.75rem' }}
+                >
+                  {availableModels.map((m) => (
+                    <MenuItem key={m.id} value={m.id} sx={{ fontSize: '0.75rem' }}>
+                      <Box>
+                        <Typography variant="body2" component="span">{m.name}</Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+                          ({m.provider})
+                        </Typography>
+                      </Box>
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+          )}
+
+          {modelsLoading && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+              <CircularProgress size={12} />
+              <Typography variant="caption" color="text.secondary">Loading models…</Typography>
+            </Box>
+          )}
         </ChatHeader>
-
-        {/* WebLLM status banner – shown only when VITE_WEBLLM_ENABLED=true */}
-        {webLLMEnabled && (
-          <WebLLMBannerBox>
-            {webLLM.status === 'idle' && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <MemoryIcon fontSize="small" color="action" />
-                <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
-                  In-browser AI available ({webLLM.modelId})
-                </Typography>
-                <Button size="small" variant="outlined" onClick={webLLM.initEngine}>
-                  Load model
-                </Button>
-              </Box>
-            )}
-
-            {webLLM.status === 'loading' && (
-              <Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                  <MemoryIcon fontSize="small" color="primary" />
-                  <Typography variant="caption" color="primary" sx={{ flex: 1 }}>
-                    {webLLM.progressText || 'Loading model…'} ({webLLM.progress}%)
-                  </Typography>
-                </Box>
-                <LinearProgress variant="determinate" value={webLLM.progress} />
-              </Box>
-            )}
-
-            {webLLM.status === 'ready' && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <MemoryIcon fontSize="small" color="success" />
-                <Typography variant="caption" color="success.main" sx={{ flex: 1 }}>
-                  In-browser AI ready
-                </Typography>
-                <Chip label={webLLM.modelId} size="small" variant="outlined" />
-              </Box>
-            )}
-
-            {webLLM.status === 'unsupported' && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <MemoryIcon fontSize="small" color="disabled" />
-                <Typography variant="caption" color="text.disabled">
-                  WebGPU not available – using backend
-                </Typography>
-              </Box>
-            )}
-
-            {webLLM.status === 'error' && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Typography variant="caption" color="error" sx={{ flex: 1 }}>
-                  Failed to load model: {webLLM.error}
-                </Typography>
-                <Button size="small" color="error" onClick={webLLM.initEngine}>
-                  Retry
-                </Button>
-              </Box>
-            )}
-          </WebLLMBannerBox>
-        )}
 
         <MessageArea ref={messageAreaRef}>
           {error && (
@@ -347,13 +309,13 @@ export function ChatComponent({ manifestId, windowId, state, actions }) {
                 Examples:
               </Typography>
               <Typography variant="caption" color="textSecondary">
-                • Describe the objects in this image?
+                • Transcribe this image for me
               </Typography>
               <Typography variant="caption" color="textSecondary">
-                • Transcribe this image
+                • Can you tell me when this image was taken?
               </Typography>
               <Typography variant="caption" color="textSecondary">
-                • What colours do you see?
+                • Translate the writing in this image
               </Typography>
             </Box>
           )}

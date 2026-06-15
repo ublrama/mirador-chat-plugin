@@ -82,7 +82,8 @@ export function loadDefaultMirador() {
       id: 'demo',
       windows: [
         {
-          loadedManifest: 'https://purl.stanford.edu/bb020ty1503/iiif/manifest',
+
+          loadedManifest: 'https://digitalcollections.universiteitleiden.nl/iiif_manifest/item:3479124/manifest',
         },
       ],
       catalog: [
@@ -94,6 +95,19 @@ export function loadDefaultMirador() {
           manifestId: 'https://digitalcollections.universiteitleiden.nl/iiif_manifest/collection:frankscholten/manifest',
           provider: 'Leiden University Libraries'
         },
+          {
+              manifestId: 'https://media.nga.gov/public/manifests/nga_highlights.json'
+          },
+          {
+              manifestId: 'https://iiif.biblissima.fr/chateauroux/B360446201_MS0005/manifest.json'
+          }
+          ,
+          {
+              manifestId: ' https://iiif.wellcomecollection.org/presentation/v2/b18035723'
+          }
+
+
+
       ],
       thumbnailNavigation: {
         defaultPosition: 'far-bottom',
